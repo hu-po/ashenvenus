@@ -7,10 +7,9 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 import PIL.Image as Image
 import torch.utils.data as data
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, RandomSampler
 from torchvision.transforms import ToTensor
 from tqdm import tqdm
-import random
 import numpy as np
 from copy import deepcopy
 
@@ -197,11 +196,15 @@ class FragmentPatchesDataset(data.Dataset):
                 log.debug(f"Labels padded dtype: {self.labels_padded.dtype}")
                 assert self.labels_padded.shape[1:] == self.fragment.shape[1:
                                                                        ], f"Labels and fragment are not the same size: {self.labels_padded.shape} vs {self.fragment.shape}"
+            
 
     def __len__(self):
         return self.fragment_size_x * self.fragment_size_y * self.fragment_size_z
 
+    
     def __getitem__(self, index):
+        # print(f"Getting item {index} out of {self.__len__()}")
+
         # Get the x, y, and z indices
         z = index // (self.fragment_size_x * self.fragment_size_y)
         y = (index - z * self.fragment_size_x *
@@ -383,36 +386,57 @@ if __name__ == '__main__':
     # del dataset
 
     # Simulated Training (no viz, batched)
+    train_dataset_size = 100
     for data_dir in [
         'data/train/1/',
         'data/train/2/',
         'data/train/3/',
     ]:
-        log.setLevel(logging.DEBUG)
+        # TODO: Use a sampler to only sample areas with image mask
+        log.setLevel(logging.INFO)
         dataset = FragmentPatchesDataset(data_dir, viz=False, train=True)
-        dataset_loader = DataLoader(dataset, batch_size=1, shuffle=True, num_workers=0)
-        patch, mask, label = next(iter(dataset_loader))
-        log.info(f"Mock Batch for {data_dir}")
-        log.info(f"\t\t patch.shape = {patch.shape}")
-        log.info(f"\t\t patch.dtype = {patch.dtype}")
-        log.info(f"\t\t mask.shape = {mask.shape}")
-        log.info(f"\t\t mask.dtype = {mask.dtype}")
-        log.info(f"\t\t label.shape = {label.shape}")
-        log.info(f"\t\t label.dtype = {label.dtype}")
+        dataset_loader = DataLoader(
+            dataset,
+            batch_size=32,
+            # Shuffle does NOT work
+            shuffle=False,
+            sampler=RandomSampler(dataset, replacement=True, num_samples=train_dataset_size),
+            num_workers=16,
+            # This will make it go faster if it is loaded into a GPU
+            pin_memory=True,
+        )
+        for i, (patch, mask, label) in enumerate(dataset_loader):
+            log.info(f"Mock Batch {i} for {data_dir}")
+            log.info(f"\t\t patch.shape = {patch.shape}")
+            log.info(f"\t\t patch.dtype = {patch.dtype}")
+            log.info(f"\t\t mask.shape = {mask.shape}")
+            log.info(f"\t\t mask.dtype = {mask.dtype}")
+            log.info(f"\t\t label.shape = {label.shape}")
+            log.info(f"\t\t label.dtype = {label.dtype}")
         del dataset
 
     # Simulated Eval (no viz, batched)
+    test_dataset_size = 100
     for data_dir in [
         'data/test/a/',
         'data/test/b/',
     ]:
         log.setLevel(logging.INFO)
         dataset = FragmentPatchesDataset(data_dir, viz=False, train=False)
-        dataset_loader = DataLoader(dataset, batch_size=1, shuffle=False, num_workers=0)
-        patch, mask = next(iter(dataset_loader))
-        log.info(f"Mock Batch for {data_dir}")
-        log.info(f"\t\t patch.shape = {patch.shape}")
-        log.info(f"\t\t patch.dtype = {patch.dtype}")
-        log.info(f"\t\t mask.shape = {mask.shape}")
-        log.info(f"\t\t mask.dtype = {mask.dtype}")
+        dataset_loader = DataLoader(
+            dataset,
+            batch_size=32,
+            # Shuffle does NOT work
+            shuffle=False,
+            sampler=RandomSampler(dataset, replacement=True, num_samples=test_dataset_size),
+            num_workers=16,
+            # This will make it go faster if it is loaded into a GPU
+            pin_memory=True,
+        )
+        for i, (patch, mask) in enumerate(dataset_loader):
+            log.info(f"Mock Batch {i} for {data_dir}")
+            log.info(f"\t\t patch.shape = {patch.shape}")
+            log.info(f"\t\t patch.dtype = {patch.dtype}")
+            log.info(f"\t\t mask.shape = {mask.shape}")
+            log.info(f"\t\t mask.dtype = {mask.dtype}")
         del dataset

@@ -1,5 +1,5 @@
 import numpy as np
-
+import pandas as pd
 
 def rle(output, threshold=0.4):
     flat_img = np.where(output.flatten().cpu() >
@@ -10,3 +10,11 @@ def rle(output, threshold=0.4):
     ends_ix = np.where(ends)[0] + 2
     lengths = ends_ix - starts_ix
     return " ".join(map(str, sum(zip(starts_ix, lengths), ())))
+
+def make_submission():
+    submission = defaultdict(list)
+    for fragment_id, fragment_name in enumerate(test_fragments):
+        submission["Id"].append(fragment_name.name)
+        submission["Predicted"].append(rle(pred_images[fragment_id]))
+
+    pd.DataFrame.from_dict(submission).to_csv("/kaggle/working/submission.csv", index=False)

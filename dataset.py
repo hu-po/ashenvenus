@@ -7,10 +7,12 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 import PIL.Image as Image
 import torch.utils.data as data
+from torch.utils.data import DataLoader
 from torchvision.transforms import ToTensor
 from tqdm import tqdm
 import random
 import numpy as np
+from copy import deepcopy
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
@@ -41,7 +43,7 @@ def load_image(image_filepath: str = 'image.png', viz: bool = False) -> torch.Te
         plt.hist(_pt_np.flatten(), bins=256, range=(0, 1))
         plt.xlabel('Pixel Value')
         plt.ylabel('Frequency')
-        plt.show()
+        # plt.show()
     return _pt
 
 
@@ -62,6 +64,8 @@ class FragmentPatchesDataset(data.Dataset):
         patch_size_x: int = 256, #1028,
         patch_size_y: int = 256, #1028,
         patch_size_z: int = 32, #32,
+        # Dataset datatype
+        dataset_dtype: torch.dtype = torch.float32,
         # Visualization toggle for debugging
         viz: bool = False,
         # Training vs Testing mode
@@ -95,10 +99,10 @@ class FragmentPatchesDataset(data.Dataset):
                 self.image_ir_filepath), f"IR file {self.image_ir_filepath} does not exist"
 
         # Load the meta data (mask, labels, and IR images)
-        self.mask = load_image(self.image_mask_filepath, viz=self.viz)
+        self.mask = load_image(self.image_mask_filepath, viz=self.viz).to(torch.bool)
         if self.train:
-            self.labels = load_image(self.image_labels_filepath, viz=self.viz)
-            self.ir = load_image(self.image_ir_filepath, viz=self.viz)
+            self.labels = load_image(self.image_labels_filepath, viz=self.viz).to(torch.bool)
+            self.ir = load_image(self.image_ir_filepath, viz=self.viz).to(torch.float16)
 
         # Assert that there are the correct amount of slices
         self.expected_slice_count = expected_slice_count
@@ -107,19 +111,39 @@ class FragmentPatchesDataset(data.Dataset):
                 glob.glob(os.path.join(self.slices_dir, '*.tif')))
             assert self.actual_slice_count == self.expected_slice_count, f"Expected {self.expected_slice_count} slices, but found {self.actual_slice_count}"
 
+        # Dataset type determines precision of the data
+        self.dataset_dtype = dataset_dtype
+        
         # Load a single slice to get the width and height
-        _slice = load_image(os.path.join(self.slices_dir, '00.tif'))
+        _slice = load_image(os.path.join(self.slices_dir, '00.tif'), viz=self.viz)
+        if log.isEnabledFor(logging.DEBUG):
+            log.debug(f"\tSlice type: {_slice.dtype}")
+            log.debug(f"\tSlice min: {_slice.min()}")
+            log.debug(f"\tSlice max: {_slice.max()}")
+            log.debug(f"\tSlice mean: {_slice.mean()}")
+            log.debug(f"\tSlice contains NaN: {torch.isnan(_slice).any()}")
+        _slice = _slice.to(self.dataset_dtype)
+        if log.isEnabledFor(logging.DEBUG):
+            log.debug(f"\tSlice type: {_slice.dtype}")
+            log.debug(f"\tSlice min: {_slice.min()}")
+            log.debug(f"\tSlice max: {_slice.max()}")
+            log.debug(f"\tSlice mean: {_slice.mean()}")
+            log.debug(f"\tSlice contains NaN: {torch.isnan(_slice).any()}")
         self.fragment_size_x = _slice.shape[1]
         self.fragment_size_y = _slice.shape[2]
         self.fragment_size_z = self.expected_slice_count
 
         # Load the slices (tif files) into one tensor, pre-allocate
         self.fragment = torch.zeros(
-            self.expected_slice_count, self.fragment_size_x, self.fragment_size_y)
+            self.expected_slice_count,
+            self.fragment_size_x,
+            self.fragment_size_y,
+            dtype=self.dataset_dtype,
+        )
         for i in tqdm(range(self.expected_slice_count)):
             slice_path = os.path.join(self.slices_dir, f"{i:02d}.tif")
             _slice = load_image(slice_path)
-            self.fragment[i, :, :] = _slice
+            self.fragment[i, :, :] = _slice.to(self.dataset_dtype)
 
         # Print some information about our slices
         log.info(f"Loaded slices into tensor: {self.fragment.shape}")
@@ -128,6 +152,7 @@ class FragmentPatchesDataset(data.Dataset):
             log.debug(f"\tSlices min: {self.fragment.min()}")
             log.debug(f"\tSlices max: {self.fragment.max()}")
             log.debug(f"\tSlices mean: {self.fragment.mean()}")
+            log.debug(f"\tSlices contains NaN: {torch.isnan(self.fragment).any()}")
 
         # Make sure the patch sizes are valid
         self.patch_size_x = patch_size_x
@@ -151,23 +176,25 @@ class FragmentPatchesDataset(data.Dataset):
         # Pad the fragment to make sure we can get patches from the edges
         pad_sizes = (self.patch_half_size_x, self.patch_half_size_x, self.patch_half_size_y,
                      self.patch_half_size_y, self.patch_half_size_z, self.patch_half_size_z)
-        self.fragment = torch.nn.functional.pad(
-            self.fragment, pad_sizes, value=0.0)
+        self.fragment = torch.nn.functional.pad(self.fragment, pad_sizes, value=0.0)
+        if log.isEnabledFor(logging.DEBUG):
+            log.debug(f"Fragment padded: {self.fragment.shape}")
 
-        # Pad the mask, labels, and IR images
+        # Pad the mask
         pad_sizes = (self.patch_half_size_x, self.patch_half_size_x, self.patch_half_size_y,
                      self.patch_half_size_y, 0, 0)  # No padding on z
-        self.mask_padded = torch.nn.functional.pad(
-            self.mask, pad_sizes, value=0.0)
+        self.mask_padded = torch.nn.functional.pad(self.mask, pad_sizes, value=0)
         if log.isEnabledFor(logging.DEBUG):
             log.debug(f"Mask padded: {self.mask_padded.shape}")
+            log.debug(f"Mask padded dtype: {self.mask_padded.dtype}")
             assert self.mask_padded.shape[1:] == self.fragment.shape[1:
                                                                  ], f"Mask and fragment are not the same size: {self.mask_padded.shape} vs {self.fragment.shape}"
         if self.train:
-            self.labels_padded = torch.nn.functional.pad(
-                self.labels, pad_sizes, value=0.0)
+            # Pad the labels
+            self.labels_padded = torch.nn.functional.pad(self.labels, pad_sizes, value=0)
             if log.isEnabledFor(logging.DEBUG):
                 log.debug(f"Labels padded: {self.labels_padded.shape}")
+                log.debug(f"Labels padded dtype: {self.labels_padded.dtype}")
                 assert self.labels_padded.shape[1:] == self.fragment.shape[1:
                                                                        ], f"Labels and fragment are not the same size: {self.labels_padded.shape} vs {self.fragment.shape}"
 
@@ -201,69 +228,85 @@ class FragmentPatchesDataset(data.Dataset):
             log.debug(f"\t\t Patch mean is {patch.mean()}")
             assert patch.shape == (self.patch_size_z, self.patch_size_x,
                                 self.patch_size_y), f"Patch shape is {patch.shape} but should be {self.patch_size_z, self.patch_size_x, self.patch_size_y}"
+            assert patch.dtype == self.dataset_dtype, f"Patch dtype is {patch.dtype} but should be {self.dataset_dtype}"
+
 
         # Get the mask
+        if log.isEnabledFor(logging.DEBUG):
+            log.debug(f"Mask padded: {self.mask_padded.shape}")
+            log.debug(f"Mask padded dtype: {self.mask_padded.dtype}")
         mask_patch = self.mask_padded[
             0,
             x: x + self.patch_size_x,
             y: y + self.patch_size_y,
         ]
-        log.debug(f"Mask patch shape is {mask_patch.shape}")
-        assert mask_patch.shape == (self.patch_size_x,
+        if log.isEnabledFor(logging.DEBUG):
+            log.debug(f"Mask patch shape is {mask_patch.shape}")
+            log.debug(f"\t\t Mask patch type is {mask_patch.dtype}")
+            assert mask_patch.shape == (self.patch_size_x,
                                     self.patch_size_y), f"Mask patch shape is {mask_patch.shape} but should be {self.patch_size_x, self.patch_size_y}"
 
         # Get the label
         if self.train:
+            if log.isEnabledFor(logging.DEBUG):
+                log.debug(f"Labels padded: {self.labels_padded.shape}")
+                log.debug(f"Labels padded dtype: {self.labels_padded.dtype}")
             label_patch = self.labels_padded[
                 0,
                 x: x + self.patch_size_x,
                 y: y + self.patch_size_y,
             ]
-            log.debug(f"Label patch shape is {label_patch.shape}")
-            assert label_patch.shape == (self.patch_size_x,
-                                         self.patch_size_y), f"Label patch shape is {label_patch.shape} but should be {self.patch_size_x, self.patch_size_y}"
+            if log.isEnabledFor(logging.DEBUG):
+                log.debug(f"Label patch shape is {label_patch.shape}")
+                log.debug(f"\t\t Label patch type is {label_patch.dtype}")
+                assert label_patch.shape == (self.patch_size_x,
+                                            self.patch_size_y), f"Label patch shape is {label_patch.shape} but should be {self.patch_size_x, self.patch_size_y}"
 
         if self.viz:
             # Visualize the patch bbox, mask patch, label patch, and patch itself
-            fig, ax = plt.subplots(1, 3, figsize=(20, 20))
+            fig, ax = plt.subplots(3, 3, figsize=(20, 20))
 
-            # Visualize the patch in the infrared image
-            ax[0].set_title("Patch in IR image")
-            if self.train:
-                _pt_np = self.ir.numpy()
-            else:
-                _pt_np = self.mask.numpy()
-            _pt_np = np.transpose(_pt_np, (1, 2, 0))
-            ax[0].imshow(_pt_np, cmap='gray')
+            # Visualize the patch as a bbox
             # This box is in the original image coordinates (No padding)
             bbox_anchor = (y - self.patch_half_size_y,
                            x - self.patch_half_size_x)
             bbox = patches.Rectangle(
                 (bbox_anchor), self.patch_size_y, self.patch_size_x, linewidth=2, edgecolor='r', facecolor='none')
-            ax[0].add_patch(bbox)
+            
+            ax[0, 1].set_title("Patch in Mask image")
+            _pt_np = self.mask.numpy() * 255
+            _pt_np = np.transpose(_pt_np, (1, 2, 0))
+            ax[0, 1].imshow(_pt_np, cmap='gray', vmin=0, vmax=1)
+            ax[0, 1].add_patch(deepcopy(bbox))
 
-            # Visualize the mask of the patch
-            ax[1].set_title("Mask patch")
-            # These are in padded image coordinates
-            _pt_np = self.mask_padded[
-                0,
-                x: x + self.patch_size_x,
-                y: y + self.patch_size_y,
-            ]
-            # _pt_np = np.transpose(_pt_np, (1, 2, 0))
-            ax[1].imshow(_pt_np, cmap='gray')
-
-            # Visualize the label of the patch
             if self.train:
-                ax[2].set_title(f"Label patch")
-                _pt_np = self.labels_padded[
+                ax[0, 0].set_title("Patch in IR image")
+                _pt_np = self.ir.numpy()
+                _pt_np = np.transpose(_pt_np, (1, 2, 0))
+                ax[0, 0].imshow(_pt_np, cmap='gray')
+                ax[0, 0].add_patch(deepcopy(bbox))
+
+                ax[0, 2].set_title("Patch in Label image")
+                _pt_np = self.labels.numpy() * 255
+                _pt_np = np.transpose(_pt_np, (1, 2, 0))
+                ax[0, 2].imshow(_pt_np, cmap='gray', vmin=0, vmax=1)
+                ax[0, 2].add_patch(deepcopy(bbox))
+
+            ax[1, 1].set_title("Mask patch")
+            ax[1, 1].imshow(mask_patch.numpy() * 255, cmap='gray', vmin=0, vmax=1)
+
+            if self.train:
+                ax[1, 0].set_title("IR patch")
+                # Non-padded coordinates
+                _pt_np = self.ir[
                     0,
-                    x: x + self.patch_size_x,
-                    y: y + self.patch_size_y,
-                ]
-                # _pt_np = np.transpose(_pt_np, (1, 2, 0))
-                ax[2].imshow(_pt_np, cmap='gray')
-                plt.show()
+                    x - self.patch_half_size_x: x + self.patch_half_size_x,
+                    y - self.patch_half_size_y: y + self.patch_half_size_y,
+                ].numpy()
+                ax[1, 0].imshow(_pt_np, cmap='gray')
+
+                ax[1, 2].set_title(f"Label patch")
+                ax[1, 2].imshow(label_patch.numpy() * 255, cmap='gray', vmin=0, vmax=1)
 
             # Calculate the number of rows and columns
             num_cols = int(np.ceil(np.sqrt(self.patch_size_z)))
@@ -288,46 +331,88 @@ class FragmentPatchesDataset(data.Dataset):
 
         if self.train:
             return patch, mask_patch, label_patch
-        # If we're not training, we don't have labels
-        return patch, mask_patch
+        else:
+            # If we're not training, we don't have labels
+            return patch, mask_patch
 
 
 if __name__ == '__main__':
-    log.setLevel(logging.DEBUG)
 
     # Test the dataset class
-    # data_dir = 'data/train/1/'
+    data_dir = 'data/train/1/'
     # data_dir = 'data/train/2/'
-    data_dir = 'data/train/3/'
+    # data_dir = 'data/train/3/'
     # data_dir = 'data/test/a/'
     # data_dir = 'data/test/b/'
 
-    # Train mode w/ viz
-    dataset = FragmentPatchesDataset(data_dir, viz=True, train=True)
-    indices_to_try = [
-        0,
-        len(dataset) // 2,
-        len(dataset) - 1,
-        random.randint(0, len(dataset)),
-        random.randint(0, len(dataset)),
-    ]
-    for i in indices_to_try:
-        log.debug(f"Trying index {i} out of {len(dataset)}")
-        patch, mask, label = dataset[i]
-    del dataset
-    
-    # Test mode w/ viz
-    dataset = FragmentPatchesDataset(data_dir, viz=True, train=False)
-    for i in indices_to_try:
-        log.debug(f"Trying index {i} out of {len(dataset)}")
-        patch, mask = dataset[i]
-    del dataset
-
-    # # Batched train mode w/o viz
-    # dataset = FragmentPatchesDataset(data_dir, train=True)
-    # dataset_loader = data.DataLoader(dataset, batch_size=2, shuffle=True)
-    # for i, (patch, mask, label) in enumerate(dataset_loader):
-    #     log.debug(f"Batch {i} has shape {patch.shape}")
-    #     if i == 2:
-    #         break
+    # # Train mode w/ viz
+    # log.setLevel(logging.DEBUG)
+    # dataset = FragmentPatchesDataset(data_dir, viz=True, train=True)
+    # indices_to_try = [
+    #     # 0,
+    #     # len(dataset) // 2,
+    #     # len(dataset) - 1,
+    #     random.randint(0, len(dataset)),
+    #     random.randint(0, len(dataset)),
+    #     random.randint(0, len(dataset)),
+    #     random.randint(0, len(dataset)),
+    # ]
+    # for i in indices_to_try:
+    #     log.info(f"Trying index {i} out of {len(dataset)}")
+    #     patch, mask, label = dataset[i]
+    #     log.info(f"Mock Batch for {data_dir}")
+    #     log.info(f"\t\t patch.shape = {patch.shape}")
+    #     log.info(f"\t\t patch.dtype = {patch.dtype}")
+    #     log.info(f"\t\t mask.shape = {mask.shape}")
+    #     log.info(f"\t\t mask.dtype = {mask.dtype}")
+    #     log.info(f"\t\t label.shape = {label.shape}")
+    #     log.info(f"\t\t label.dtype = {label.dtype}")
     # del dataset
+    
+    # # Test mode w/ viz
+    # log.setLevel(logging.DEBUG)
+    # dataset = FragmentPatchesDataset(data_dir, viz=True, train=False)
+    # for i in indices_to_try:
+    #     log.info(f"Trying index {i} out of {len(dataset)}")
+    #     patch, mask = dataset[i]
+    #     log.info(f"Mock Batch for {data_dir}")
+    #     log.info(f"\t\t patch.shape = {patch.shape}")
+    #     log.info(f"\t\t patch.dtype = {patch.dtype}")
+    #     log.info(f"\t\t mask.shape = {mask.shape}")
+    #     log.info(f"\t\t mask.dtype = {mask.dtype}")
+    # del dataset
+
+    # Simulated Training (no viz, batched)
+    for data_dir in [
+        'data/train/1/',
+        'data/train/2/',
+        'data/train/3/',
+    ]:
+        log.setLevel(logging.DEBUG)
+        dataset = FragmentPatchesDataset(data_dir, viz=False, train=True)
+        dataset_loader = DataLoader(dataset, batch_size=1, shuffle=True, num_workers=0)
+        patch, mask, label = next(iter(dataset_loader))
+        log.info(f"Mock Batch for {data_dir}")
+        log.info(f"\t\t patch.shape = {patch.shape}")
+        log.info(f"\t\t patch.dtype = {patch.dtype}")
+        log.info(f"\t\t mask.shape = {mask.shape}")
+        log.info(f"\t\t mask.dtype = {mask.dtype}")
+        log.info(f"\t\t label.shape = {label.shape}")
+        log.info(f"\t\t label.dtype = {label.dtype}")
+        del dataset
+
+    # Simulated Eval (no viz, batched)
+    for data_dir in [
+        'data/test/a/',
+        'data/test/b/',
+    ]:
+        log.setLevel(logging.INFO)
+        dataset = FragmentPatchesDataset(data_dir, viz=False, train=False)
+        dataset_loader = DataLoader(dataset, batch_size=1, shuffle=False, num_workers=0)
+        patch, mask = next(iter(dataset_loader))
+        log.info(f"Mock Batch for {data_dir}")
+        log.info(f"\t\t patch.shape = {patch.shape}")
+        log.info(f"\t\t patch.dtype = {patch.dtype}")
+        log.info(f"\t\t mask.shape = {mask.shape}")
+        log.info(f"\t\t mask.dtype = {mask.dtype}")
+        del dataset

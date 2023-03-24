@@ -31,8 +31,9 @@ def load_image(image_filepath: str = 'image.png', viz: bool = False) -> torch.Te
     if viz:
         plt.title(image_filepath)
         # Move the channel axis to the last position
-        _pt = np.transpose(_pt.numpy(), (1, 2, 0))
-        plt.imshow(_pt, cmap='gray')
+        _pt_np = _pt.numpy()
+        _pt_np = np.transpose(_pt_np.numpy(), (1, 2, 0))
+        plt.imshow(_pt_np, cmap='gray')
         plt.show()
     return _pt
 
@@ -189,7 +190,7 @@ class FragmentPatchesDataset(data.Dataset):
             bbox_anchor = (y - self.patch_half_size_y,
                            x - self.patch_half_size_x)
             bbox = patches.Rectangle(
-                bbox_anchor, self.patch_size_y, self.patch_size_x, linewidth=10, edgecolor='r', facecolor='none')
+                bbox_anchor, self.patch_size_y, self.patch_size_x, linewidth=2, edgecolor='r', facecolor='none')
             ax[0].add_patch(bbox)
 
             # Visualize the mask of the patch
@@ -249,6 +250,13 @@ if __name__ == '__main__':
     # Test the dataset class
     data_dir = 'data/train/1/'
     dataset = FragmentPatchesDataset(data_dir)
-    for _ in range(3):
-        i = random.randint(0, len(dataset))
+    indices_to_try = [
+        0,
+        len(dataset) // 2,
+        len(dataset) - 1,
+        random.randint(0, len(dataset)),
+        random.randint(0, len(dataset)),
+    ]
+    for i in indices_to_try:
+        log.debug(f"Trying index {i} out of {len(dataset)}")
         patch, label = dataset.__getitem__(i, viz_patch=True, viz_patch_full=True)

@@ -2,17 +2,19 @@ import torch
 import torch.nn as nn
 
 from utils import get_device
+from dataset import FragmentPatchesDataset
 
 
-class CNN3D(nn.Module):
-    def __init__(self):
-        super(CNN3D, self).__init__()
-        self.conv1 = nn.Conv3d(1, 16, 3, 1, 1)
+class SmolCNN(nn.Module):
+    def __init__(
+        self,
+        kernel_size_3d: int = 3,
+    ):
+        super(SmolCNN, self).__init__()
+        # 1D kernel in depth
+        self.conv1 = nn.Conv3d(1, 8, (kernel_size_3d, 1, 1), 1)
+        self.conv1 = nn.Conv3d(1, 8, kernel_size_3d, 1)
         self.pool1 = nn.MaxPool3d(2, 2)
-        self.conv2 = nn.Conv3d(16, 32, 3, 1, 1)
-        self.pool2 = nn.MaxPool3d(2, 2)
-        self.conv3 = nn.Conv3d(32, 64, 3, 1, 1)
-        self.pool3 = nn.MaxPool3d(2, 2)
         self.flatten = nn.Flatten(start_dim=1)
         self.fc1 = nn.LazyLinear(128)
         self.relu = nn.ReLU()
@@ -21,8 +23,6 @@ class CNN3D(nn.Module):
 
     def forward(self, x):
         x = self.pool1(self.conv1(x))
-        x = self.pool2(self.conv2(x))
-        x = self.pool3(self.conv3(x))
         x = self.flatten(x)
         x = self.relu(self.fc1(x))
         x = self.sigmoid(self.fc2(x))
@@ -34,4 +34,13 @@ if __name__ == '__main__':
     device = get_device()
 
     # Test the model
-    y = My3DCNN.to(device)
+    model = SmolCNN()
+    model.to(device)
+
+    # Test with some data
+    data_dir = 'data/train/1/'
+    dataset = FragmentPatchesDataset(data_dir)
+    for i in range(3):
+        patch, label = dataset[i]
+        output = model(patch.unsqueeze(0).unsqueeze(0).to(device))
+        print(output)

@@ -1,6 +1,6 @@
 import torch
 
-from model import My3DCNN
+from model import UNet3D
 from utils import get_device
 from dataset import FragmentPatchesDataset
 import torch.utils.data as data
@@ -13,7 +13,9 @@ log = logging.getLogger(__name__)
 
 
 def train_eval_loop(
-    data_dir: str = "data/train/1/",
+    train_dir: str = "data/train",
+    eval_dir: str = "data/eval",
+    output_dir: str = "output",
     batch_size: int = 1,
     lr: float = 0.001,
     epochs: int = 2,
@@ -22,23 +24,25 @@ def train_eval_loop(
     # Get the device
     device = get_device()
 
-    # Load the model
-    model = My3DCNN(**kwargs).to(device)
+    # Load the model, try to fit on GPU
+    model = UNet3D(**kwargs)
+    model = model.to(device)
 
-    # Load the dataset
-    dataset = FragmentPatchesDataset(data_dir, **kwargs)
+    # Load the full datasets (train)
+    train_dataset_full = FragmentPatchesDataset(train_dir)
+    eval_dataset_full = FragmentPatchesDataset(eval_dir)
 
-    # Split dataset into train and test
+    # Split dataset into train and validation
     train_size = int(0.8 * len(dataset))
     test_size = len(dataset) - train_size
-    train_dataset, test_dataset = data.random_split(
+    train_dataset, valid_dataset = data.random_split(
         dataset, [train_size, test_size])
 
     # Create the dataloaders
     train_loader = data.DataLoader(
         train_dataset, batch_size=batch_size, shuffle=True)
     test_loader = data.DataLoader(
-        test_dataset, batch_size=batch_size, shuffle=False)
+        valid_dataset, batch_size=batch_size, shuffle=False)
 
     # Create optimizers
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)

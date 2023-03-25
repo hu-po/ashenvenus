@@ -56,5 +56,5 @@ def write_to_submission(
         inklabels = np.array(Image.open(image_label_filepath), dtype=np.uint8)
         starts_ix, lengths = rle(inklabels)
         inklabels_rle = " ".join(map(str, sum(zip(starts_ix, lengths), ())))
-        with open(submission_filepath, 'w') as f:
+        with open(submission_filepath, 'a') as f:
             f.write(f"{subtest_name},{inklabels_rle}")

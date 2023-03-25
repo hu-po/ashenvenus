@@ -5,6 +5,7 @@ from utils import get_device
 from dataset import FragmentPatchesDataset
 from torch.utils.data import DataLoader, RandomSampler
 from torchvision import transforms
+from tensorboardX import SummaryWriter
 from tqdm import tqdm
 
 import logging
@@ -72,7 +73,7 @@ def train_valid_eval_loop(
     loss_fn = torch.nn.MSELoss()
 
     # Train the model
-    best_eval_score = 0
+    best_valid_loss = 0
     for epoch in range(epochs):
         log.info(f"Epoch {epoch + 1} of {epochs}")
 
@@ -87,20 +88,20 @@ def train_valid_eval_loop(
             optimizer.zero_grad()
 
         # Test
-        eval_score = 0
+        valid_loss = 0
         for patch, mask, label in tqdm(valid_dataloader):
             patch = patch.to(device)
             label = label.to(device).unsqueeze(1).to(torch.float32)
             with torch.no_grad():
                 pred = model(patch)
                 loss = loss_fn(pred, label)
-                eval_score += loss.item()
+                valid_loss += loss.item()
 
-        if eval_score > best_eval_score:
-            best_eval_score = eval_score
+        if valid_loss < best_valid_loss:
+            best_valid_loss = valid_loss
             torch.save(model.state_dict(), f"{output_dir}/model.pth")
 
-    return best_eval_score
+    return best_valid_loss
 
 
 def evaluate(
@@ -130,9 +131,11 @@ def evaluate(
         with torch.no_grad():
             pred = model(patch)
 
+    # Create image with predicted
+
     # TODO: RLE dump to file
             
 
 
 if __name__ == '__main__':
-    train_eval_loop()
+    train_valid_eval_loop()

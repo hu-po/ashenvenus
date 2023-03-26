@@ -20,22 +20,36 @@ log = logging.getLogger(__name__)
 
 def load_image(
     image_filepath: str = 'image.png',
-    grayscale: bool = False,
-    dtype: torch.dtype = torch.float32,
+    image_type: str = None,
+    tensor_dtype: torch.dtype = torch.float32,
+    resize_ratio: float = 1.0,
     viz: bool = False,
 ) -> torch.Tensor:
     _image = Image.open(image_filepath)
-    if grayscale:
-        _image = _image.convert('L')
+    if image_type is not None:
+        # ‘L’ (8-bit pixels, grayscale)
+        # ‘F’ (32-bit floating point pixels)
+        log.debug(f"Converting {image_filepath} to {image_type}")
+        _image = _image.convert(image_type)
+    if resize_ratio != 1.0:
+        log.debug(f"Resizing {image_filepath} by {resize_ratio}")
+        _image = _image.resize((
+            int(_image.width * resize_ratio),
+            int(_image.height * resize_ratio)
+        ), resample=Image.BILINEAR)
     _pt = ToTensor()(_image)
-    _pt = _pt.to(dtype)
+    _pt = _pt.to(tensor_dtype)
     if log.isEnabledFor(logging.DEBUG):
         log.debug(f"Loading {image_filepath}")
         log.debug(f"\tImage shape: {_pt.shape}")
         log.debug(f"\tImage type: {_pt.dtype}")
-        if dtype not in [torch.bool, torch.uint8]:
-            log.debug(f"\tImage min: {_pt.min()}")
-            log.debug(f"\tImage max: {_pt.max()}")
+        _min = 0
+        _max = 1
+        if tensor_dtype not in [torch.bool, torch.uint8]:
+            _min = _pt.min().numpy()
+            _max = _pt.max().numpy()
+            log.debug(f"\tImage min: {_min}")
+            log.debug(f"\tImage max: {_max}")
             log.debug(f"\tImage mean: {_pt.mean()}")
             log.debug(f"\tImage std: {_pt.std()}")
         if viz:
@@ -47,8 +61,8 @@ def load_image(
             _pt_np = np.squeeze(_pt_np)
             plt.imshow(_pt_np, cmap='gray', vmin=0, vmax=1)
             plt.subplot(122)
-            plt.title('Histogram of Greyscale Pixel Values')
-            plt.hist(_pt_np.flatten(), bins=256, range=(0, 1))
+            plt.title('Histogram of Pixel Values')
+            plt.hist(_pt_np.flatten(), bins=256, range=(_min, _max))
             plt.xlabel('Pixel Value')
             plt.ylabel('Frequency')
             # plt.show()
@@ -71,6 +85,8 @@ class ClassificationDataset(data.Dataset):
         # Size of an individual patch
         patch_size_x: int = 1028,
         patch_size_y: int = 256,
+        # Image resize ratio
+        resize_ratio: float = 1.0,
         # Dataset datatype
         dataset_dtype: torch.dtype = torch.float32,
         # Visualization toggle for debugging
@@ -105,24 +121,32 @@ class ClassificationDataset(data.Dataset):
             assert os.path.exists(
                 self.image_ir_filepath), f"IR file {self.image_ir_filepath} does not exist"
 
+        # Resize ratio reduces the size of the image
+        self.resize_ratio = resize_ratio
+        assert self.resize_ratio > 0, f"Resize ratio must be greater than 0"
+        assert self.resize_ratio <= 1, f"Resize ratio must be less than or equal to 1"
+
         # Load the meta data (mask, labels, and IR images)
         self.mask = load_image(
             self.image_mask_filepath,
-            grayscale=True,
-            dtype=torch.bool,
+            image_type='L',
+            tensor_dtype=torch.bool,
+            resize_ratio=self.resize_ratio,
             viz=self.viz,
         )
         if self.train:
             self.labels = load_image(
                 self.image_labels_filepath,
-                grayscale=True,
-                dtype=torch.bool,
+                image_type='L',
+                tensor_dtype=torch.bool,
+                resize_ratio=self.resize_ratio,
                 viz=self.viz,
             )
             if self.viz:
                 self.ir = load_image(
                     self.image_ir_filepath,
-                    grayscale=True,
+                    image_type='L',
+                    resize_ratio=self.resize_ratio,
                     viz=self.viz,
                 )
 
@@ -139,8 +163,9 @@ class ClassificationDataset(data.Dataset):
         # Load a single slice to get the width and height
         _slice = load_image(
             os.path.join(self.slices_dir, '00.tif'),
-            grayscale=False,
-            dtype=dataset_dtype,
+            image_type='F',
+            tensor_dtype=dataset_dtype,
+            resize_ratio=self.resize_ratio,
             viz=self.viz
         )
         if log.isEnabledFor(logging.DEBUG):
@@ -162,8 +187,9 @@ class ClassificationDataset(data.Dataset):
         for i in tqdm(range(self.slice_depth)):
             _slice = load_image(
                 os.path.join(self.slices_dir, f"{i:02d}.tif"),
-                grayscale=False,
-                dtype=dataset_dtype,
+                image_type='F',
+                tensor_dtype=dataset_dtype,
+                resize_ratio=self.resize_ratio,
             )
             self.fragment[i, :, :] = _slice
 
@@ -176,6 +202,11 @@ class ClassificationDataset(data.Dataset):
             log.debug(f"\tSlices mean: {self.fragment.mean()}")
             log.debug(
                 f"\tSlices contains NaN: {torch.isnan(self.fragment).any()}")
+            
+        # Get the mean and std of the fragment at the mask indices
+        masked_fragment = torch.masked_select(self.fragment, self.mask)
+        self.mean = torch.mean(masked_fragment, dim=-1)
+        self.std = torch.std(masked_fragment, dim=-1)
 
         # Make sure the patch sizes are valid
         self.patch_size_x = patch_size_x
@@ -218,8 +249,8 @@ class ClassificationDataset(data.Dataset):
                 log.debug(f"Mask dtype: {self.mask.dtype}")
                 log.debug(f"Mask padded: {self.mask_padded.shape}")
                 log.debug(f"Mask padded dtype: {self.mask_padded.dtype}")
-                assert self.mask_padded.shape[1:] == self.fragment.shape[1:
-                                                                         ], f"Mask and fragment are not the same size: {self.mask_padded.shape} vs {self.fragment.shape}"
+                assert self.mask_padded.shape[1] == self.fragment_size_x_pad, f"Mask and fragment are not the same size: {self.mask_padded.shape} vs {self.fragment.shape}"
+                assert self.mask_padded.shape[2] == self.fragment_size_y_pad, f"Mask and fragment are not the same size: {self.mask_padded.shape} vs {self.fragment.shape}"
             if self.train:
                 # Pad the labels
                 self.labels_padded = torch.nn.functional.pad(
@@ -228,18 +259,17 @@ class ClassificationDataset(data.Dataset):
                     log.debug(f"Labels: {self.labels.shape}")
                     log.debug(f"Labels dtype: {self.labels.dtype}")
                     log.debug(f"Labels padded: {self.labels_padded.shape}")
-                    log.debug(
-                        f"Labels padded dtype: {self.labels_padded.dtype}")
-                    assert self.labels_padded.shape[1:] == self.fragment.shape[1:
-                                                                               ], f"Labels and fragment are not the same size: {self.labels_padded.shape} vs {self.fragment.shape}"
+                    log.debug(f"Labels padded dtype: {self.labels_padded.dtype}")
+                    assert self.labels_padded.shape[1] == self.fragment_size_x_pad, f"Labels and fragment are not the same size: {self.labels_padded.shape} vs {self.fragment.shape}"
+                    assert self.labels_padded.shape[2] == self.fragment_size_y_pad, f"Labels and fragment are not the same size: {self.labels_padded.shape} vs {self.fragment.shape}"
                 # Pad the IR
                 self.ir_padded = torch.nn.functional.pad(
                     self.ir, pad_sizes, value=0)
                 if log.isEnabledFor(logging.DEBUG):
                     log.debug(f"IR padded: {self.ir_padded.shape}")
                     log.debug(f"IR padded dtype: {self.ir_padded.dtype}")
-                    assert self.ir_padded.shape[1:] == self.fragment.shape[1:
-                                                                           ], f"IR and fragment are not the same size: {self.ir_padded.shape} vs {self.fragment.shape}"
+                    assert self.ir_padded.shape[1] == self.fragment_size_x_pad, f"IR and fragment are not the same size: {self.ir_padded.shape} vs {self.fragment.shape}"
+                    assert self.ir_padded.shape[2] == self.fragment_size_y_pad, f"IR and fragment are not the same size: {self.ir_padded.shape} vs {self.fragment.shape}"
 
         # Get indices where mask is 1
         self.mask_indices = torch.nonzero(self.mask.squeeze())
@@ -254,7 +284,6 @@ class ClassificationDataset(data.Dataset):
                 f"Fragment count: {self.fragment.shape[0] * self.fragment.shape[1] * self.fragment.shape[2]}")
             log.debug(
                 f"Percent of fragment in mask: {self.mask_indices.shape[0] / (self.fragment.shape[0] * self.fragment.shape[1] * self.fragment.shape[2])}")
-
 
 
     def __len__(self):
@@ -280,7 +309,6 @@ class ClassificationDataset(data.Dataset):
                 f"\t\t Y index is (padded) {y_pad} out of {self.fragment_size_y_pad}")
             log.debug(f"\t\t X index is {x} out of {self.fragment_size_x}")
             log.debug(f"\t\t Y index is {y} out of {self.fragment_size_y}")
-            
 
         # Get the patch
         patch = self.fragment[
@@ -412,6 +440,9 @@ class ClassificationDataset(data.Dataset):
 
             plt.show()
 
+        # Normalize the patch based on dataset
+        patch = (patch - self.mean) / self.std
+
         if self.train:
             return patch, label
         else:
@@ -430,7 +461,8 @@ if __name__ == '__main__':
 
     # # Train mode w/ viz
     # log.setLevel(logging.DEBUG)
-    # dataset = ClassificationDataset(data_dir, viz=True, train=True)
+    # dataset = ClassificationDataset(
+    #     data_dir, viz=True, resize_ratio=0.5, train=True)
     # indices_to_try = [
     #     len(dataset) - 1,
     #     0,
@@ -446,31 +478,37 @@ if __name__ == '__main__':
     #     log.info(f"Mock Batch for {data_dir}")
     #     log.info(f"\t\t patch.shape = {patch.shape}")
     #     log.info(f"\t\t patch.dtype = {patch.dtype}")
+    #     log.info(f"\t\t patch.min() = {patch.min()}")
+    #     log.info(f"\t\t patch.min() = {patch.max()}")
     #     log.info(f"\t\t label.shape = {label.shape}")
     #     log.info(f"\t\t label.dtype = {label.dtype}")
     # del dataset
 
     # # Test mode w/ viz
     # log.setLevel(logging.DEBUG)
-    # dataset = ClassificationDataset(data_dir, viz=True, train=False)
+    # dataset = ClassificationDataset(
+    #     data_dir, viz=True, resize_ratio=0.5, train=False)
     # for i in indices_to_try:
     #     log.info(f"Trying index {i} out of {len(dataset)}")
     #     patch = dataset[i]
     #     log.info(f"Mock Batch for {data_dir}")
     #     log.info(f"\t\t patch.shape = {patch.shape}")
     #     log.info(f"\t\t patch.dtype = {patch.dtype}")
+    #     log.info(f"\t\t patch.min() = {patch.min()}")
+    #     log.info(f"\t\t patch.min() = {patch.max()}")
     # del dataset
 
     # Simulated Training (no viz, batched)
     train_dataset_size = 100
     for data_dir in [
         'data/train/1/',
-        # 'data/train/2/',
+        'data/train/2/',
         'data/train/3/',
     ]:
         # TODO: Use a sampler to only sample areas with image mask
         log.setLevel(logging.INFO)
-        dataset = ClassificationDataset(data_dir, viz=False, train=True)
+        dataset = ClassificationDataset(
+            data_dir, viz=False, resize_ratio=0.25, train=True)
         dataset_loader = DataLoader(
             dataset,
             batch_size=32,
@@ -486,6 +524,8 @@ if __name__ == '__main__':
             log.info(f"Mock Batch {i} for {data_dir}")
             log.info(f"\t\t patch.shape = {patch.shape}")
             log.info(f"\t\t patch.dtype = {patch.dtype}")
+            log.info(f"\t\t patch.min() = {patch.min()}")
+            log.info(f"\t\t patch.max() = {patch.max()}")
             log.info(f"\t\t label.shape = {label.shape}")
             log.info(f"\t\t label.dtype = {label.dtype}")
         del dataset
@@ -497,14 +537,14 @@ if __name__ == '__main__':
         'data/test/b/',
     ]:
         log.setLevel(logging.INFO)
-        dataset = ClassificationDataset(data_dir, viz=False, train=False)
+        dataset = ClassificationDataset(
+            data_dir, viz=False, resize_ratio=0.25, train=False)
         dataset_loader = DataLoader(
             dataset,
             batch_size=32,
             # Shuffle does NOT work
             shuffle=False,
-            sampler=RandomSampler(dataset, replacement=True,
-                                  num_samples=test_dataset_size),
+            sampler=RandomSampler(dataset, num_samples=test_dataset_size),
             num_workers=16,
             # This will make it go faster if it is loaded into a GPU
             pin_memory=True,
@@ -513,4 +553,6 @@ if __name__ == '__main__':
             log.info(f"Mock Batch {i} for {data_dir}")
             log.info(f"\t\t patch.shape = {patch.shape}")
             log.info(f"\t\t patch.dtype = {patch.dtype}")
+            log.info(f"\t\t patch.min() = {patch.min()}")
+            log.info(f"\t\t patch.max() = {patch.max()}")
         del dataset

@@ -299,14 +299,15 @@ class ClassificationDataset(data.Dataset):
             assert patch.dtype == self.dataset_dtype, f"Patch dtype is {patch.dtype} but should be {self.dataset_dtype}"
 
         # Label is going to be the label of the center voxel
-        label = self.labels[
-            0,
-            x,
-            y,
-        ]
-        if log.isEnabledFor(logging.DEBUG):
-            log.debug(f"Label is {label}")
-            log.debug(f"\t\t Label type is {label.dtype}")
+        if self.train:
+            label = self.labels[
+                0,
+                x,
+                y,
+            ]
+            if log.isEnabledFor(logging.DEBUG):
+                log.debug(f"Label is {label}")
+                log.debug(f"\t\t Label type is {label.dtype}")
 
         if self.viz:
 
@@ -464,7 +465,7 @@ if __name__ == '__main__':
     train_dataset_size = 100
     for data_dir in [
         'data/train/1/',
-        'data/train/2/',
+        # 'data/train/2/',
         'data/train/3/',
     ]:
         # TODO: Use a sampler to only sample areas with image mask

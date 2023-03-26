@@ -181,8 +181,14 @@ class ClassificationDataset(data.Dataset):
             log.debug(f"Fragment padded: {self.fragment.shape}")
 
         # Pad the mask
-        pad_sizes = (self.patch_half_size_x, self.patch_half_size_x, self.patch_half_size_y,
-                     self.patch_half_size_y, 0, 0)  # No padding on z
+        pad_sizes = (
+            # Padding in X
+            self.patch_half_size_x, self.patch_half_size_x,
+            # Padding in Y
+            self.patch_half_size_y, self.patch_half_size_y,
+            # No padding on z 
+            0, 0,
+        )
         self.mask_padded = torch.nn.functional.pad(self.mask, pad_sizes, value=0)
         if log.isEnabledFor(logging.DEBUG):
             log.debug(f"Mask padded: {self.mask_padded.shape}")
@@ -243,8 +249,8 @@ class ClassificationDataset(data.Dataset):
         # Label is going to be the label of the center voxel
         label = self.labels_padded[
             0,
-            x + self.patch_half_size_x,
-            y + self.patch_half_size_y,
+            x,
+            y,
         ]
         if log.isEnabledFor(logging.DEBUG):
             log.debug(f"Label is {label}")
@@ -304,7 +310,7 @@ class ClassificationDataset(data.Dataset):
                 ax[0, 0].set_title("Patch in IR image")
                 _pt_np = self.ir.numpy()
                 _pt_np = np.transpose(_pt_np, (1, 2, 0))
-                ax[0, 0].imshow(_pt_np, cmap='gray')
+                ax[0, 0].imshow(_pt_np, cmap='gray', vmin=0, vmax=1)
                 ax[0, 0].add_patch(deepcopy(bbox))
 
                 ax[0, 2].set_title("Patch in Label image")
@@ -324,7 +330,7 @@ class ClassificationDataset(data.Dataset):
                     x - self.patch_half_size_x: x + self.patch_half_size_x,
                     y - self.patch_half_size_y: y + self.patch_half_size_y,
                 ].numpy()
-                ax[1, 0].imshow(_pt_np, cmap='gray')
+                ax[1, 0].imshow(_pt_np, cmap='gray', vmin=0, vmax=1)
 
                 ax[1, 2].set_title(f"Label patch")
                 ax[1, 2].imshow(label_patch.numpy() * 255, cmap='gray', vmin=0, vmax=1)

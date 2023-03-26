@@ -5,12 +5,12 @@ from utils import get_device
 from dataset import FragmentPatchesDataset
 
 
-class SmolCNN(nn.Module):
+class CNN3D(nn.Module):
     def __init__(
         self,
         kernel_size_3d: int = 3,
     ):
-        super(SmolCNN, self).__init__()
+        super(CNN3D, self).__init__()
         # 1D kernel in depth
         self.conv1 = nn.Conv3d(1, 8, (kernel_size_3d, 1, 1), 1)
         self.conv1 = nn.Conv3d(1, 8, kernel_size_3d, 1)

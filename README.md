@@ -60,3 +60,11 @@ Can you design a PyTorch model for me in Python. I want a Convolutional network 
 - I want to use BatchNorm
 - I want to use GeLU activations
 - I want to use Residual connections
+
+## Sweeping
+
+```
+CUDA_VISIBLE_DEVICES=0 python sweep.py --seed 0
+
+CUDA_VISIBLE_DEVICES=1 python sweep.py --seed 1
+```

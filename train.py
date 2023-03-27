@@ -43,7 +43,6 @@ def train_valid_loop(
     model = model.to(device)
 
     # Create directory based on run_name
-    run_name += f"_{np.random.randint(1000):03d}"
     output_dir = os.path.join(output_dir, run_name)
     os.makedirs(output_dir, exist_ok=True)
 
@@ -78,9 +77,11 @@ def train_valid_loop(
 
     # Reduce dataset size based on max values
     if train_dataset_size is not None:
+        np.random.shuffle(train_idx)
         train_idx = train_idx[:train_dataset_size]
         log.debug(f"Reduced train dataset size: {len(train_idx)}")
     if valid_dataset_size is not None:
+        np.random.shuffle(valid_idx)
         valid_idx = valid_idx[:valid_dataset_size]
         log.debug(f"Reduced eval dataset size: {len(valid_idx)}")
 
@@ -126,6 +127,7 @@ def train_valid_loop(
         log.info(f"Training...")
         train_loss = 0
         for patch, label in tqdm(train_dataloader):
+        # for patch, label in train_dataloader:
             optimizer.zero_grad()
             patch = patch.to(device)
             label = label.to(device).unsqueeze(1).to(torch.float32)
@@ -147,6 +149,7 @@ def train_valid_loop(
         log.info(f"Validation...")
         valid_loss = 0
         for patch, label in tqdm(valid_dataloader):
+        # for patch, label in valid_dataloader:
             patch = patch.to(device)
             label = label.to(device).unsqueeze(1).to(torch.float32)
             with torch.no_grad():
@@ -163,6 +166,16 @@ def train_valid_loop(
         if valid_loss < best_valid_loss:
             best_valid_loss = valid_loss
             torch.save(model.state_dict(), f"{output_dir}/model.pth")
+
+    evaluate(
+        model,
+        data_dir="data/test/a",
+        output_dir=output_dir,
+        slice_depth=slice_depth,
+        patch_size_x=patch_size_x,
+        patch_size_y=patch_size_y,
+        resize_ratio=resize_ratio,
+    )
 
     writer.close()  # Close the SummaryWriter
     return best_valid_loss
@@ -233,20 +246,20 @@ def evaluate(
     _img = Image.fromarray(pred_image * 255)
     _img.save(f"{output_dir}/pred_image.png")
 
-    if log.isEnabledFor(logging.DEBUG):
-        log.debug(f"\tImage shape: {pred_image.shape}")
-        log.debug(f"\tImage type: {pred_image.dtype}")
-        plt.figure(figsize=(12, 5))
-        plt.subplot(121)
-        plt.title(f'Prediction for {output_dir}')
-        # Remove the channel dimension for grayscale
-        plt.imshow(pred_image, cmap='gray', vmin=0, vmax=1)
-        plt.subplot(122)
-        plt.title('Histogram of Pixel Values')
-        plt.hist(pred_image.flatten(), bins=256, range=(0, 1))
-        plt.xlabel('Pixel Value')
-        plt.ylabel('Frequency')
-        plt.show()
+    # if log.isEnabledFor(logging.DEBUG):
+    #     log.debug(f"\tImage shape: {pred_image.shape}")
+    #     log.debug(f"\tImage type: {pred_image.dtype}")
+    #     plt.figure(figsize=(12, 5))
+    #     plt.subplot(121)
+    #     plt.title(f'Prediction for {output_dir}')
+    #     # Remove the channel dimension for grayscale
+    #     plt.imshow(pred_image, cmap='gray', vmin=0, vmax=1)
+    #     plt.subplot(122)
+    #     plt.title('Histogram of Pixel Values')
+    #     plt.hist(pred_image.flatten(), bins=256, range=(0, 1))
+    #     plt.xlabel('Pixel Value')
+    #     plt.ylabel('Frequency')
+    #     plt.show()
 
     # valid_loss /= len(valid_dataloader)  # Calculate the average validation loss
     # writer.add_scalar('Loss/valid', valid_loss, epoch)  # Log the average validation loss

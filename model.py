@@ -2,6 +2,7 @@ import logging
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from utils import get_device
 
@@ -39,7 +40,7 @@ class ResidualBlock(nn.Module):
 class BinaryCNNClassifier(nn.Module):
     def __init__(
         self,
-        slice_depth: int = 3,
+        slice_depth: int = 65,
     ):
         super(BinaryCNNClassifier, self).__init__()
         self.layer1 = ResidualBlock(slice_depth, 128, 3, 2, 1)
@@ -49,7 +50,6 @@ class BinaryCNNClassifier(nn.Module):
         self.fc = nn.LazyLinear(128)
         self.relu = nn.ReLU()
         self.fc2 = nn.LazyLinear(1)
-        self.sigmoid = nn.Sigmoid()
 
     def forward(self, x):
         # Model Body
@@ -63,8 +63,30 @@ class BinaryCNNClassifier(nn.Module):
         out = self.fc(out)
         out = self.relu(out)
         out = self.fc2(out)
-        out = self.sigmoid(out)
         return out
+
+
+class SimpleNet(nn.Module):
+    def __init__(
+        self,
+        slice_depth: int = 65,
+    ):
+        super().__init__()
+        self.conv1 = nn.Conv2d(slice_depth, 6, 5)
+        self.pool = nn.MaxPool2d(2, 2)
+        self.conv2 = nn.Conv2d(6, 16, 5)
+        self.fc1 = nn.LazyLinear(120)
+        self.fc2 = nn.LazyLinear(84)
+        self.fc3 = nn.LazyLinear(1)
+
+    def forward(self, x):
+        x = self.pool(F.relu(self.conv1(x)))
+        x = self.pool(F.relu(self.conv2(x)))
+        x = torch.flatten(x, 1)  # flatten all dimensions except batch
+        x = F.relu(self.fc1(x))
+        x = F.relu(self.fc2(x))
+        x = self.fc3(x)
+        return x
 
 
 if __name__ == '__main__':
@@ -79,19 +101,25 @@ if __name__ == '__main__':
 
     # Attributes to print out about GPU
     attrList = [[
-        {'attr':'id','name':'ID'},
-        {'attr':'load','name':'GPU','suffix':'%','transform': lambda x: x*100,'precision':0},
-        {'attr':'memoryUtil','name':'MEM','suffix':'%','transform': lambda x: x*100,'precision':0},
-        {'attr':'memoryTotal','name':'Memory total','suffix':'MB','precision':0},
-        {'attr':'memoryUsed','name':'Memory used','suffix':'MB','precision':0},
-        {'attr':'memoryFree','name':'Memory free','suffix':'MB','precision':0},
+        {'attr': 'id', 'name': 'ID'},
+        {'attr': 'load', 'name': 'GPU', 'suffix': '%',
+            'transform': lambda x: x*100, 'precision': 0},
+        {'attr': 'memoryUtil', 'name': 'MEM', 'suffix': '%',
+            'transform': lambda x: x*100, 'precision': 0},
+        {'attr': 'memoryTotal', 'name': 'Memory total',
+            'suffix': 'MB', 'precision': 0},
+        {'attr': 'memoryUsed', 'name': 'Memory used',
+            'suffix': 'MB', 'precision': 0},
+        {'attr': 'memoryFree', 'name': 'Memory free',
+            'suffix': 'MB', 'precision': 0},
     ]]
 
     log.debug("\n\n GPU usage after data is loaded")
     showUtilization(attrList=attrList)
 
     # Test the model fits into the GPU
-    model = BinaryCNNClassifier()
+    # model = BinaryCNNClassifier()
+    model = SimpleNet()
     model.to(device)
 
     log.debug("\n\n GPU usage after model is loaded")
@@ -99,12 +127,12 @@ if __name__ == '__main__':
 
     # Fake data to test the model
     x = torch.randn(INPUT_SHAPE, dtype=torch.float32).to(device)
-    
+
     log.debug("\n\n GPU usage after data is loaded")
     showUtilization(attrList=attrList)
 
     y = model(x)
-    
+
     # Print out the model information
     log.debug(model)
 
@@ -125,4 +153,5 @@ if __name__ == '__main__':
     log.debug(f"Model Size: {_model_size_gb} GB")
 
     # Print out the model graph
-    make_dot(y, params=dict(model.named_parameters())).render("model_graph", format="png")
+    make_dot(y, params=dict(model.named_parameters())
+             ).render("model_graph", format="png")

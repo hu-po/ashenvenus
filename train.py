@@ -1,6 +1,7 @@
 import torch
+import os
 
-from model import BinaryCNNClassifier
+from model import BinaryCNNClassifier, SimpleNet
 from utils import get_device
 from dataset import ClassificationDataset
 from torch.utils.data import DataLoader, SubsetRandomSampler, SequentialSampler
@@ -21,12 +22,13 @@ log = logging.getLogger(__name__)
 def train_valid_loop(
     train_dir: str = "data/train/1",
     output_dir: str = "output/train",
+    run_name: str = "debug",
     slice_depth: int = 3,
     patch_size_x: int = 512,
     patch_size_y: int = 128,
     resize_ratio: float = 1.0,
-    train_dataset_size: int = 100,
-    valid_dataset_size: int = 64,
+    train_dataset_size: int = None,
+    valid_dataset_size: int = None,
     batch_size: int = 16,
     lr: float = 0.001,
     epochs: int = 2,
@@ -35,10 +37,15 @@ def train_valid_loop(
     device = get_device()
 
     # Load the model, try to fit on GPU
-    model = BinaryCNNClassifier(
+    model = SimpleNet(
         slice_depth=slice_depth,
     )
     model = model.to(device)
+
+    # Create directory based on run_name with uuid for uniqueness
+    run_name += f"_{np.random.randint(1000):03d}"
+    output_dir = os.path.join(output_dir, run_name)
+    os.makedirs(output_dir, exist_ok=True)
 
     # Writer for Tensorboard
     writer = SummaryWriter(output_dir)
@@ -70,10 +77,12 @@ def train_valid_loop(
     log.debug(f"Raw eval dataset size: {len(valid_idx)}")
 
     # Reduce dataset size based on max values
-    train_idx = train_idx[:train_dataset_size]
-    valid_idx = valid_idx[:valid_dataset_size]
-    log.debug(f"Reduced train dataset size: {len(train_idx)}")
-    log.debug(f"Reduced eval dataset size: {len(valid_idx)}")
+    if train_dataset_size is not None:
+        train_idx = train_idx[:train_dataset_size]
+        log.debug(f"Reduced train dataset size: {len(train_idx)}")
+    if valid_dataset_size is not None:
+        valid_idx = valid_idx[:valid_dataset_size]
+        log.debug(f"Reduced eval dataset size: {len(valid_idx)}")
 
     # Sampler for Train and Validation
     train_sampler = SubsetRandomSampler(train_idx)
@@ -105,29 +114,37 @@ def train_valid_loop(
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     loss_fn = nn.BCEWithLogitsLoss()
 
+    # Simple optimizer and loss
+    # optimizer = torch.optim.SGD(model.parameters(), lr=lr)
+    # loss_fn = nn.CrossEntropyLoss()
+
     # Train the model
     best_valid_loss = 0
     for epoch in range(epochs):
         log.info(f"Epoch {epoch + 1} of {epochs}")
 
-        # Train
+        log.info(f"Training...")
         train_loss = 0
         for patch, label in tqdm(train_dataloader):
+            optimizer.zero_grad()
             patch = patch.to(device)
             label = label.to(device).unsqueeze(1).to(torch.float32)
             pred = model(patch)
+            # log.debug(f"Labels {label}")
+            # log.debug(f"Predic {pred}")
             loss = loss_fn(pred, label)
             loss.backward()
             optimizer.step()
-            optimizer.zero_grad()
+            
             train_loss += loss.item()  # Accumulate the training loss
 
         # Calculate the average training loss
         train_loss /= len(train_dataloader)
         # Log the average training loss
-        writer.add_scalar('Loss/train', train_loss, epoch)
+        writer.add_scalar(f'{loss_fn.__class__.__name__}/train', train_loss, epoch)
 
-        # Test
+        
+        log.info(f"Validation...")
         valid_loss = 0
         for patch, label in tqdm(valid_dataloader):
             patch = patch.to(device)
@@ -163,8 +180,8 @@ def evaluate(
     device = get_device()
     model = model.to(device)
 
-    # Writer for Tensorboard
-    writer = SummaryWriter(output_dir)
+    # Make output directory
+    os.makedirs(output_dir, exist_ok=True)
 
     # Evaluation dataset
     eval_dataset = ClassificationDataset(
@@ -204,6 +221,7 @@ def evaluate(
         pixel_index = eval_dataset.mask_indices[i]
         with torch.no_grad():
             pred = model(patch)
+            pred = torch.sigmoid(pred)
 
         pred_image[pixel_index[0], pixel_index[1]] = pred
 
@@ -235,10 +253,10 @@ def evaluate(
 
 if __name__ == '__main__':
     log.setLevel(logging.DEBUG)
-    slice_depth = 3
-    patch_size_x = 32
+    slice_depth = 65
+    patch_size_x = 64
     patch_size_y = 16
-    resize_ratio = 0.02
+    resize_ratio = 0.10
 
     trained_model = train_valid_loop(
         train_dir="data/train/1",
@@ -246,11 +264,11 @@ if __name__ == '__main__':
         patch_size_x=patch_size_x,
         patch_size_y=patch_size_y,
         resize_ratio=resize_ratio,
-        train_dataset_size=100,
-        valid_dataset_size=64,
-        batch_size=16,
-        lr=0.01,
-        epochs=2,
+        # train_dataset_size=1000000,
+        # valid_dataset_size=10000,
+        batch_size=128,
+        lr=0.001,
+        epochs=10,
         num_workers=16,
     )
     evaluate(

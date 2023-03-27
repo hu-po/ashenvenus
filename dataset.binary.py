@@ -459,44 +459,44 @@ if __name__ == '__main__':
     # data_dir = 'data/test/a/'
     # data_dir = 'data/test/b/'
 
-    # # Train mode w/ viz
-    # log.setLevel(logging.DEBUG)
-    # dataset = ClassificationDataset(
-    #     data_dir, viz=True, resize_ratio=0.5, train=True)
-    # indices_to_try = [
-    #     len(dataset) - 1,
-    #     0,
-    #     len(dataset) // 2,
-    #     random.randint(0, len(dataset)),
-    #     random.randint(0, len(dataset)),
-    #     random.randint(0, len(dataset)),
-    #     random.randint(0, len(dataset)),
-    # ]
-    # for i in indices_to_try:
-    #     log.info(f"Trying index {i} out of {len(dataset)}")
-    #     patch, label = dataset[i]
-    #     log.info(f"Mock Batch for {data_dir}")
-    #     log.info(f"\t\t patch.shape = {patch.shape}")
-    #     log.info(f"\t\t patch.dtype = {patch.dtype}")
-    #     log.info(f"\t\t patch.min() = {patch.min()}")
-    #     log.info(f"\t\t patch.min() = {patch.max()}")
-    #     log.info(f"\t\t label.shape = {label.shape}")
-    #     log.info(f"\t\t label.dtype = {label.dtype}")
-    # del dataset
+    # Train mode w/ viz
+    log.setLevel(logging.DEBUG)
+    dataset = ClassificationDataset(
+        data_dir, viz=True, resize_ratio=0.5, train=True)
+    indices_to_try = [
+        len(dataset) - 1,
+        0,
+        len(dataset) // 2,
+        random.randint(0, len(dataset)),
+        random.randint(0, len(dataset)),
+        random.randint(0, len(dataset)),
+        random.randint(0, len(dataset)),
+    ]
+    for i in indices_to_try:
+        log.info(f"Trying index {i} out of {len(dataset)}")
+        patch, label = dataset[i]
+        log.info(f"Mock Batch for {data_dir}")
+        log.info(f"\t\t patch.shape = {patch.shape}")
+        log.info(f"\t\t patch.dtype = {patch.dtype}")
+        log.info(f"\t\t patch.min() = {patch.min()}")
+        log.info(f"\t\t patch.min() = {patch.max()}")
+        log.info(f"\t\t label.shape = {label.shape}")
+        log.info(f"\t\t label.dtype = {label.dtype}")
+    del dataset
 
-    # # Test mode w/ viz
-    # log.setLevel(logging.DEBUG)
-    # dataset = ClassificationDataset(
-    #     data_dir, viz=True, resize_ratio=0.5, train=False)
-    # for i in indices_to_try:
-    #     log.info(f"Trying index {i} out of {len(dataset)}")
-    #     patch = dataset[i]
-    #     log.info(f"Mock Batch for {data_dir}")
-    #     log.info(f"\t\t patch.shape = {patch.shape}")
-    #     log.info(f"\t\t patch.dtype = {patch.dtype}")
-    #     log.info(f"\t\t patch.min() = {patch.min()}")
-    #     log.info(f"\t\t patch.min() = {patch.max()}")
-    # del dataset
+    # Test mode w/ viz
+    log.setLevel(logging.DEBUG)
+    dataset = ClassificationDataset(
+        data_dir, viz=True, resize_ratio=0.5, train=False)
+    for i in indices_to_try:
+        log.info(f"Trying index {i} out of {len(dataset)}")
+        patch = dataset[i]
+        log.info(f"Mock Batch for {data_dir}")
+        log.info(f"\t\t patch.shape = {patch.shape}")
+        log.info(f"\t\t patch.dtype = {patch.dtype}")
+        log.info(f"\t\t patch.min() = {patch.min()}")
+        log.info(f"\t\t patch.min() = {patch.max()}")
+    del dataset
 
     # Simulated Training (no viz, batched)
     train_dataset_size = 100

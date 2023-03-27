@@ -37,9 +37,12 @@ class ResidualBlock(nn.Module):
 
 
 class BinaryCNNClassifier(nn.Module):
-    def __init__(self):
+    def __init__(
+        self,
+        slice_depth: int = 3,
+    ):
         super(BinaryCNNClassifier, self).__init__()
-        self.layer1 = ResidualBlock(65, 128, 3, 2, 1)
+        self.layer1 = ResidualBlock(slice_depth, 128, 3, 2, 1)
         self.layer2 = ResidualBlock(128, 256, 3, 2, 1)
         self.layer3 = ResidualBlock(256, 512, 3, 2, 1)
         self.max_pool = nn.MaxPool2d(2, 2)

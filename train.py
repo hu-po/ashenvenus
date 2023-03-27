@@ -31,7 +31,7 @@ def train_valid_loop(
     valid_dataset_size: int = None,
     batch_size: int = 16,
     lr: float = 0.001,
-    epochs: int = 2,
+    num_epochs: int = 2,
     num_workers: int = 16,
 ) -> nn.Module:
     device = get_device()
@@ -42,7 +42,7 @@ def train_valid_loop(
     )
     model = model.to(device)
 
-    # Create directory based on run_name with uuid for uniqueness
+    # Create directory based on run_name
     run_name += f"_{np.random.randint(1000):03d}"
     output_dir = os.path.join(output_dir, run_name)
     os.makedirs(output_dir, exist_ok=True)
@@ -120,8 +120,8 @@ def train_valid_loop(
 
     # Train the model
     best_valid_loss = 0
-    for epoch in range(epochs):
-        log.info(f"Epoch {epoch + 1} of {epochs}")
+    for epoch in range(num_epochs):
+        log.info(f"Epoch {epoch + 1} of {num_epochs}")
 
         log.info(f"Training...")
         train_loss = 0
@@ -142,7 +142,6 @@ def train_valid_loop(
         train_loss /= len(train_dataloader)
         # Log the average training loss
         writer.add_scalar(f'{loss_fn.__class__.__name__}/train', train_loss, epoch)
-
         
         log.info(f"Validation...")
         valid_loss = 0
@@ -161,7 +160,7 @@ def train_valid_loop(
 
         if valid_loss < best_valid_loss:
             best_valid_loss = valid_loss
-            # torch.save(model.state_dict(), f"{output_dir}/model.pth")
+            torch.save(model.state_dict(), f"{output_dir}/model.pth")
 
     writer.close()  # Close the SummaryWriter
     return model
@@ -254,9 +253,9 @@ def evaluate(
 if __name__ == '__main__':
     log.setLevel(logging.DEBUG)
     slice_depth = 65
-    patch_size_x = 64
-    patch_size_y = 16
-    resize_ratio = 0.10
+    patch_size_x = 128
+    patch_size_y = 32
+    resize_ratio = 0.25
 
     trained_model = train_valid_loop(
         train_dir="data/train/1",
@@ -268,7 +267,7 @@ if __name__ == '__main__':
         # valid_dataset_size=10000,
         batch_size=128,
         lr=0.001,
-        epochs=10,
+        num_epochs=10,
         num_workers=16,
     )
     evaluate(

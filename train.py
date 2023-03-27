@@ -3,10 +3,14 @@ import torch
 from model import BinaryCNNClassifier
 from utils import get_device
 from dataset import ClassificationDataset
-from torch.utils.data import DataLoader, SubsetRandomSampler
+from torch.utils.data import DataLoader, SubsetRandomSampler, SequentialSampler
 from torchvision import transforms
+import torch.nn as nn
 from tensorboardX import SummaryWriter
 from tqdm import tqdm
+import numpy as np
+from PIL import Image
+import matplotlib.pyplot as plt
 
 import logging
 
@@ -16,20 +20,20 @@ log = logging.getLogger(__name__)
 
 def train_valid_loop(
     train_dir: str = "data/train/1",
-    output_dir: str = "output",
+    output_dir: str = "output/train",
     slice_depth: int = 3,
     patch_size_x: int = 512,
     patch_size_y: int = 128,
     resize_ratio: float = 1.0,
     train_dataset_size: int = 100,
-    eval_dataset_size: int = 64,
+    valid_dataset_size: int = 64,
     batch_size: int = 16,
     lr: float = 0.001,
     epochs: int = 2,
     num_workers: int = 16,
-) -> float:
+) -> nn.Module:
     device = get_device()
-    
+
     # Load the model, try to fit on GPU
     model = BinaryCNNClassifier(
         slice_depth=slice_depth,
@@ -37,27 +41,27 @@ def train_valid_loop(
     model = model.to(device)
 
     # Writer for Tensorboard
-    writer = SummaryWriter(output_dir, comment="test")
+    writer = SummaryWriter(output_dir)
 
     # Training dataset
     train_dataset = ClassificationDataset(
         # Directory containing the dataset
         train_dir,
         # Expected slices per fragment
-        slice_depth = slice_depth,
+        slice_depth=slice_depth,
         # Size of an individual patch
-        patch_size_x = patch_size_x,
-        patch_size_y = patch_size_y,
+        patch_size_x=patch_size_x,
+        patch_size_y=patch_size_y,
         # Image resize ratio
-        resize_ratio = resize_ratio,
+        resize_ratio=resize_ratio,
         # Training vs Testing mode
-        train = True,
+        train=True,
     )
     total_dataset_size = len(train_dataset)
 
     # Split indices into train and validation
     start_idx_train = 0
-    end_idx_train =  int(0.7 * total_dataset_size)
+    end_idx_train = int(0.7 * total_dataset_size)
     start_idx_valid = int(0.8 * total_dataset_size)
     end_idx_valid = total_dataset_size
     train_idx = [i for i in range(start_idx_train, end_idx_train)]
@@ -67,7 +71,7 @@ def train_valid_loop(
 
     # Reduce dataset size based on max values
     train_idx = train_idx[:train_dataset_size]
-    valid_idx = valid_idx[:eval_dataset_size]
+    valid_idx = valid_idx[:valid_dataset_size]
     log.debug(f"Reduced train dataset size: {len(train_idx)}")
     log.debug(f"Reduced eval dataset size: {len(valid_idx)}")
 
@@ -99,7 +103,7 @@ def train_valid_loop(
 
     # Create optimizers
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-    loss_fn = torch.nn.BCELoss()
+    loss_fn = nn.BCEWithLogitsLoss()
 
     # Train the model
     best_valid_loss = 0
@@ -118,8 +122,10 @@ def train_valid_loop(
             optimizer.zero_grad()
             train_loss += loss.item()  # Accumulate the training loss
 
-        train_loss /= len(train_dataloader)  # Calculate the average training loss
-        writer.add_scalar('Loss/train', train_loss, epoch)  # Log the average training loss
+        # Calculate the average training loss
+        train_loss /= len(train_dataloader)
+        # Log the average training loss
+        writer.add_scalar('Loss/train', train_loss, epoch)
 
         # Test
         valid_loss = 0
@@ -131,39 +137,127 @@ def train_valid_loop(
                 loss = loss_fn(pred, label)
                 valid_loss += loss.item()
 
-        valid_loss /= len(valid_dataloader)  # Calculate the average validation loss
-        writer.add_scalar('Loss/valid', valid_loss, epoch)  # Log the average validation loss
+        # Calculate the average validation loss
+        valid_loss /= len(valid_dataloader)
+        # Log the average validation loss
+        writer.add_scalar('Loss/valid', valid_loss, epoch)
 
         if valid_loss < best_valid_loss:
             best_valid_loss = valid_loss
-            torch.save(model.state_dict(), f"{output_dir}/model.pth")
+            # torch.save(model.state_dict(), f"{output_dir}/model.pth")
 
     writer.close()  # Close the SummaryWriter
-    return best_valid_loss
+    return model
 
 
 def evaluate(
-    model,
-    loss_fn,
-    device,
+    model: nn.Module,
     data_dir="data/test/a",
-    batch_size: int = 32,
+    output_dir: str = "output/eval",
+    slice_depth: int = 3,
+    patch_size_x: int = 512,
+    patch_size_y: int = 128,
+    resize_ratio: float = 1.0,
+    threshold: float = 0.5,
 ):
-    pass
+    device = get_device()
+    model = model.to(device)
+
+    # Writer for Tensorboard
+    writer = SummaryWriter(output_dir)
+
+    # Evaluation dataset
+    eval_dataset = ClassificationDataset(
+        # Directory containing the dataset
+        data_dir,
+        # Expected slices per fragment
+        slice_depth=slice_depth,
+        # Size of an individual patch
+        patch_size_x=patch_size_x,
+        patch_size_y=patch_size_y,
+        # Image resize ratio
+        resize_ratio=resize_ratio,
+        # Training vs Testing mode
+        train=False,
+    )
+    # import pdb; pdb.set_trace()
+    eval_dataset.mask.shape
+    eval_dataset.mask_indices
+
+    # Make a blank prediction image
+    pred_image = np.zeros(eval_dataset.mask.shape[1:], dtype=np.uint8)
+
+    # DataLoaders
+    eval_dataloader = DataLoader(
+        eval_dataset,
+        batch_size=1,
+        # Shuffle does NOT work
+        shuffle=False,
+        sampler=SequentialSampler(eval_dataset),
+        num_workers=16,
+        # This will make it go faster if it is loaded into a GPU
+        pin_memory=True,
+    )
+
+    for i, patch in enumerate(tqdm(eval_dataloader)):
+        patch = patch.to(device)
+        pixel_index = eval_dataset.mask_indices[i]
+        with torch.no_grad():
+            pred = model(patch)
+
+        pred_image[pixel_index[0], pixel_index[1]] = pred
+
+        # if pred > threshold:
+        #     pred_image[pixel_index[0], pixel_index[1]] = 1
+
+    # Save the prediction image
+    _img = Image.fromarray(pred_image * 255)
+    _img.save(f"{output_dir}/pred_image.png")
+
+    if log.isEnabledFor(logging.DEBUG):
+        log.debug(f"\tImage shape: {pred_image.shape}")
+        log.debug(f"\tImage type: {pred_image.dtype}")
+        plt.figure(figsize=(12, 5))
+        plt.subplot(121)
+        plt.title(f'Prediction for {output_dir}')
+        # Remove the channel dimension for grayscale
+        plt.imshow(pred_image, cmap='gray', vmin=0, vmax=1)
+        plt.subplot(122)
+        plt.title('Histogram of Pixel Values')
+        plt.hist(pred_image.flatten(), bins=256, range=(0, 1))
+        plt.xlabel('Pixel Value')
+        plt.ylabel('Frequency')
+        plt.show()
+
+    # valid_loss /= len(valid_dataloader)  # Calculate the average validation loss
+    # writer.add_scalar('Loss/valid', valid_loss, epoch)  # Log the average validation loss
 
 
 if __name__ == '__main__':
+    log.setLevel(logging.DEBUG)
+    slice_depth = 3
+    patch_size_x = 32
+    patch_size_y = 16
+    resize_ratio = 0.02
 
-    train_valid_loop(
+    trained_model = train_valid_loop(
         train_dir="data/train/1",
-        slice_depth = 3,
-        patch_size_x = 512,
-        patch_size_y = 128,
-        resize_ratio = 1.0,
-        train_dataset_size = 1000,
-        eval_dataset_size = 200,
-        batch_size = 16,
-        lr = 0.01,
-        epochs = 10,
-        num_workers = 16,
+        slice_depth=slice_depth,
+        patch_size_x=patch_size_x,
+        patch_size_y=patch_size_y,
+        resize_ratio=resize_ratio,
+        train_dataset_size=100,
+        valid_dataset_size=64,
+        batch_size=16,
+        lr=0.01,
+        epochs=2,
+        num_workers=16,
+    )
+    evaluate(
+        model=trained_model,
+        data_dir="data/test/a",
+        slice_depth=slice_depth,
+        patch_size_x=patch_size_x,
+        patch_size_y=patch_size_y,
+        resize_ratio=resize_ratio,
     )

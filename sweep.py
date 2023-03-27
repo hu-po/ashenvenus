@@ -25,10 +25,10 @@ def objective(hparams) -> float:
     run_name += str(uuid.uuid4())[:8]
 
     # Train and evaluate a TFLite model
-    _acc: float = train_valid_loop(
-        train_dir="data/train/1",
-        output_dir="output/train",
-        run_name="debug",
+    loss: float = train_valid_loop(
+        train_dir=hparams['train_dir'],
+        output_dir="output/train/",
+        run_name=run_name,
         slice_depth=hparams['slice_depth'],
         patch_size_x=hparams['patch_size_x'],
         patch_size_y=hparams['patch_size_y'],
@@ -38,7 +38,7 @@ def objective(hparams) -> float:
         num_epochs=hparams['num_epochs'],
         num_workers=hparams['num_workers'],
     )
-    return _acc
+    return loss
 
 
 if __name__ == '__main__':
@@ -49,13 +49,15 @@ if __name__ == '__main__':
 
     # Define the search space
     search_space = {
+        'train_dir': hp.choice('train_dir', ['data/train/1', 'data/train/2', 'data/train/3']),
         'slice_depth': 65,
-        'num_workers': 16,
+        'num_workers': 1,
         'batch_size': hp.choice('batch_size', [32, 64, 128]),
         'lr': hp.loguniform('lr',  np.log(0.00001), np.log(0.01)),
         'num_epochs': hp.choice('num_epochs', [2, 6, 10]),
         'patch_size_x': hp.choice('patch_size_x', [32, 64, 128, 512]),
         'patch_size_y': hp.choice('patch_size_y', [32, 64, 128, 512]),
+        'resize_ratio': hp.choice('resize_ratio', [0.1, 0.25, 0.5]),
     }
 
     # Run the optimization

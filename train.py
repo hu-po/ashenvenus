@@ -33,7 +33,7 @@ def train_valid_loop(
     lr: float = 0.001,
     num_epochs: int = 2,
     num_workers: int = 16,
-) -> nn.Module:
+):
     device = get_device()
 
     # Load the model, try to fit on GPU
@@ -135,14 +135,15 @@ def train_valid_loop(
             loss = loss_fn(pred, label)
             loss.backward()
             optimizer.step()
-            
+
             train_loss += loss.item()  # Accumulate the training loss
 
         # Calculate the average training loss
         train_loss /= len(train_dataloader)
         # Log the average training loss
-        writer.add_scalar(f'{loss_fn.__class__.__name__}/train', train_loss, epoch)
-        
+        writer.add_scalar(
+            f'{loss_fn.__class__.__name__}/train', train_loss, epoch)
+
         log.info(f"Validation...")
         valid_loss = 0
         for patch, label in tqdm(valid_dataloader):
@@ -156,14 +157,15 @@ def train_valid_loop(
         # Calculate the average validation loss
         valid_loss /= len(valid_dataloader)
         # Log the average validation loss
-        writer.add_scalar('Loss/valid', valid_loss, epoch)
+        writer.add_scalar(
+            f'{loss_fn.__class__.__name__}/valid', valid_loss, epoch)
 
         if valid_loss < best_valid_loss:
             best_valid_loss = valid_loss
             torch.save(model.state_dict(), f"{output_dir}/model.pth")
 
     writer.close()  # Close the SummaryWriter
-    return model
+    return best_valid_loss
 
 
 def evaluate(
@@ -257,24 +259,24 @@ if __name__ == '__main__':
     patch_size_y = 32
     resize_ratio = 0.25
 
-    trained_model = train_valid_loop(
-        train_dir="data/train/1",
-        slice_depth=slice_depth,
-        patch_size_x=patch_size_x,
-        patch_size_y=patch_size_y,
-        resize_ratio=resize_ratio,
-        # train_dataset_size=1000000,
-        # valid_dataset_size=10000,
-        batch_size=128,
-        lr=0.001,
-        num_epochs=10,
-        num_workers=16,
-    )
-    evaluate(
-        model=trained_model,
-        data_dir="data/test/a",
-        slice_depth=slice_depth,
-        patch_size_x=patch_size_x,
-        patch_size_y=patch_size_y,
-        resize_ratio=resize_ratio,
-    )
+    # trained_model = train_valid_loop(
+    #     train_dir="data/train/1",
+    #     slice_depth=slice_depth,
+    #     patch_size_x=patch_size_x,
+    #     patch_size_y=patch_size_y,
+    #     resize_ratio=resize_ratio,
+    #     # train_dataset_size=1000000,
+    #     # valid_dataset_size=10000,
+    #     batch_size=128,
+    #     lr=0.001,
+    #     num_epochs=10,
+    #     num_workers=16,
+    # )
+    # evaluate(
+    #     model=trained_model,
+    #     data_dir="data/test/a",
+    #     slice_depth=slice_depth,
+    #     patch_size_x=patch_size_x,
+    #     patch_size_y=patch_size_y,
+    #     resize_ratio=resize_ratio,
+    # )

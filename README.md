@@ -68,3 +68,17 @@ CUDA_VISIBLE_DEVICES=0 python sweep.py --seed 0
 
 CUDA_VISIBLE_DEVICES=1 python sweep.py --seed 1
 ```
+
+### Sweep 1 Results (03/27/2023)
+
+Best 2 results
+
+```
+batch_size = 32
+learning_rate = 0.0004
+patch_size_x = 128, 512
+patch_size_y = 64, 32
+resize_ratio = 0.5, 0.25
+train_dataset_size = 10000, 1000000
+valid_dataset_size = 1000
+```

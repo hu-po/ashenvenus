@@ -74,8 +74,8 @@ if __name__ == '__main__':
         'patch_size_x': hp.choice('patch_size_x', [32, 64, 128, 512]),
         'patch_size_y': hp.choice('patch_size_y', [32, 64, 128, 512]),
         'resize_ratio': hp.choice('resize_ratio', [0.1, 0.25, 0.5]),
-        'train_dataset_size': hp.choice('train_dataset_size', [100, 1000]),
-        'valid_dataset_size': 1000,
+        'train_dataset_size': hp.choice('train_dataset_size', [10000, 100000, 1000000]),
+        'valid_dataset_size': hp.choice('valid_dataset_size', [100, 1000]),
         
     }
 

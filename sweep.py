@@ -24,6 +24,8 @@ def objective(hparams) -> float:
         if key in [
             'train_dir',
             'model',
+            'curriculum',
+            'optimizer',
             'patch_size_x',
             'patch_size_y',
             'resize_ratio',
@@ -31,7 +33,6 @@ def objective(hparams) -> float:
             'batch_size',
             'lr',
             'train_dataset_size',
-            'valid_dataset_size',
         ]:
             run_name += f'{key}_{str(value)}_'
 
@@ -42,6 +43,8 @@ def objective(hparams) -> float:
     loss: float = train_valid_loop(
         train_dir=hparams['train_dir'],
         model=hparams['model'],
+        optimizer=hparams['optimizer'],
+        curriculum=hparams['curriculum'],
         output_dir="output/train/",
         run_name=run_name,
         slice_depth=hparams['slice_depth'],
@@ -53,7 +56,6 @@ def objective(hparams) -> float:
         num_epochs=hparams['num_epochs'],
         num_workers=hparams['num_workers'],
         train_dataset_size=hparams['train_dataset_size'],
-        valid_dataset_size=hparams['valid_dataset_size'],
     )
     return loss
 
@@ -64,14 +66,21 @@ if __name__ == '__main__':
 
     # Define the search space
     search_space = {
-        'train_dir': hp.choice('train_dir', [
-            'data/train/1',
-            'data/train/2',
-            'data/train/3',
+        'train_dir': 'data/train',
+        'curriculum': hp.choice('curriculum', [
+            '1',
+            '2',
+            '3',
+            '123',
+            '321',
         ]),
         'model': hp.choice('model', [
             'simplenet',
             'simplenet_norm'
+        ]),
+        'optimizer': hp.choice('optimizer', [
+            'adam',
+            'sgd'
         ]),
         'slice_depth': 65,
         'num_workers': 1,
@@ -82,8 +91,13 @@ if __name__ == '__main__':
         'patch_size_y': hp.choice('patch_size_y', [64, 128]),
         'resize_ratio': hp.choice('resize_ratio', [0.25, 0.5]),
         'train_dataset_size': hp.choice('train_dataset_size', [10000, 100000, 1000000]),
-        'valid_dataset_size': hp.choice('valid_dataset_size', [1000]),
     }
+    if args.seed == 420:
+        print('TEST MODE')
+        search_space['train_dataset_size'] = 100
+        search_space['num_epochs'] = 2
+        search_space['slice_depth'] = 2
+        search_space['resize_ratio'] = 0.05
 
     # Run the optimization
     best = fmin(

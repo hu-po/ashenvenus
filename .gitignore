@@ -7,6 +7,9 @@ output/
 # Model images
 model_graph*
 
+# Submissions
+submission.csv
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

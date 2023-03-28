@@ -119,6 +119,7 @@ def train_valid_loop(
                 # for patch, label in train_dataloader:
                 optimizer.zero_grad()
                 patch = patch.to(device)
+                writer.add_histogram('patch_raw', patch, epoch)
                 label = label.to(device).unsqueeze(1).to(torch.float32)
                 pred = model(patch)
                 # log.debug(f"Labels {label}")

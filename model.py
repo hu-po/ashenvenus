@@ -88,6 +88,31 @@ class SimpleNet(nn.Module):
         x = self.fc3(x)
         return x
 
+class SimpleNetNorm(nn.Module):
+    def __init__(
+        self,
+        slice_depth: int = 65,
+    ):
+        super().__init__()
+        self.conv1 = nn.Conv2d(slice_depth, 6, 5)
+        self.bn1 = nn.BatchNorm2d(6)
+        self.pool = nn.MaxPool2d(2, 2)
+        self.conv2 = nn.Conv2d(6, 16, 5)
+        self.bn2 = nn.BatchNorm2d(16)
+        self.fc1 = nn.LazyLinear(120)
+        self.ln1 = nn.LayerNorm(120)
+        self.fc2 = nn.LazyLinear(84)
+        self.ln2 = nn.LayerNorm(84)
+        self.fc3 = nn.LazyLinear(1)
+
+    def forward(self, x):
+        x = self.pool(F.relu(self.bn1(self.conv1(x))))
+        x = self.pool(F.relu(self.bn2(self.conv2(x))))
+        x = torch.flatten(x, 1)  # flatten all dimensions except batch
+        x = F.relu(self.ln1(self.fc1(x)))
+        x = F.relu(self.ln2(self.fc2(x)))
+        x = self.fc3(x)
+        return x
 
 if __name__ == '__main__':
     from torchviz import make_dot

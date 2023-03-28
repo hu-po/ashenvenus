@@ -1,7 +1,7 @@
 import torch
 import os
 
-from model import BinaryCNNClassifier, SimpleNet
+from model import BinaryCNNClassifier, SimpleNet, SimpleNetNorm
 from utils import get_device
 from dataset import ClassificationDataset
 from torch.utils.data import DataLoader, SubsetRandomSampler, SequentialSampler
@@ -21,6 +21,7 @@ log = logging.getLogger(__name__)
 
 def train_valid_loop(
     train_dir: str = "data/train/1",
+    model: str = "simplenet",
     output_dir: str = "output/train",
     run_name: str = "debug",
     slice_depth: int = 3,
@@ -37,9 +38,14 @@ def train_valid_loop(
     device = get_device()
 
     # Load the model, try to fit on GPU
-    model = SimpleNet(
-        slice_depth=slice_depth,
-    )
+    if model == "simplenet":
+        model = SimpleNet(
+            slice_depth=slice_depth,
+        )
+    elif model == "simplenet_norm":
+        model = SimpleNetNorm(
+            slice_depth=slice_depth,
+        )
     model = model.to(device)
 
     # Create directory based on run_name
@@ -127,7 +133,7 @@ def train_valid_loop(
         log.info(f"Training...")
         train_loss = 0
         for patch, label in tqdm(train_dataloader):
-        # for patch, label in train_dataloader:
+            # for patch, label in train_dataloader:
             optimizer.zero_grad()
             patch = patch.to(device)
             label = label.to(device).unsqueeze(1).to(torch.float32)
@@ -149,7 +155,7 @@ def train_valid_loop(
         log.info(f"Validation...")
         valid_loss = 0
         for patch, label in tqdm(valid_dataloader):
-        # for patch, label in valid_dataloader:
+            # for patch, label in valid_dataloader:
             patch = patch.to(device)
             label = label.to(device).unsqueeze(1).to(torch.float32)
             with torch.no_grad():

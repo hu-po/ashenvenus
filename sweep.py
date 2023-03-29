@@ -89,7 +89,7 @@ if __name__ == '__main__':
         'num_epochs': hp.choice('num_epochs', [6]),
         'patch_size_x': hp.choice('patch_size_x', [128, 512]),
         'patch_size_y': hp.choice('patch_size_y', [64, 128]),
-        'resize_ratio': hp.choice('resize_ratio', [0.25, 0.5]),
+        'resize_ratio': hp.choice('resize_ratio', [0.25]),
         'train_dataset_size': hp.choice('train_dataset_size', [10000, 100000, 1000000]),
     }
     if args.seed == 420:
@@ -104,6 +104,6 @@ if __name__ == '__main__':
         objective,
         space=search_space,
         algo=tpe.suggest,
-        max_evals=20,
+        max_evals=100,
         rstate=np.random.default_rng(args.seed),
     )

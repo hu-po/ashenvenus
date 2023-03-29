@@ -22,17 +22,17 @@ def objective(hparams) -> float:
     for key, value in hparams.items():
         # Choose name of run based on hparams
         if key in [
-            'train_dir',
             'model',
             'curriculum',
             'optimizer',
+            'image_augs',
             'patch_size_x',
             'patch_size_y',
             'resize_ratio',
             'num_epochs',
             'batch_size',
             'lr',
-            'train_dataset_size',
+            'max_samples_per_dataset',
         ]:
             run_name += f'{key}_{str(value)}_'
 
@@ -45,6 +45,7 @@ def objective(hparams) -> float:
         model=hparams['model'],
         optimizer=hparams['optimizer'],
         curriculum=hparams['curriculum'],
+        image_augs=hparams['image_augs'],
         output_dir="output/train/",
         run_name=run_name,
         slice_depth=hparams['slice_depth'],
@@ -55,7 +56,7 @@ def objective(hparams) -> float:
         lr=hparams['lr'],
         num_epochs=hparams['num_epochs'],
         num_workers=hparams['num_workers'],
-        train_dataset_size=hparams['train_dataset_size'],
+        max_samples_per_dataset=hparams['max_samples_per_dataset'],
     )
     return loss
 
@@ -78,23 +79,24 @@ if __name__ == '__main__':
             'simplenet',
             'simplenet_norm'
         ]),
+        'image_augs': hp.choice('image_augs', [True, False]),
         'optimizer': hp.choice('optimizer', [
             'adam',
             'sgd'
         ]),
         'slice_depth': 65,
         'num_workers': 1,
-        'batch_size': hp.choice('batch_size', [32]),
+        'batch_size': hp.choice('batch_size', [64]),
         'lr': hp.loguniform('lr',  np.log(0.00001), np.log(0.001)),
         'num_epochs': hp.choice('num_epochs', [6]),
-        'patch_size_x': hp.choice('patch_size_x', [128, 512]),
-        'patch_size_y': hp.choice('patch_size_y', [64, 128]),
-        'resize_ratio': hp.choice('resize_ratio', [0.25]),
-        'train_dataset_size': hp.choice('train_dataset_size', [10000, 100000, 1000000]),
+        'patch_size_x': hp.choice('patch_size_x', [128]),
+        'patch_size_y': hp.choice('patch_size_y', [64]),
+        'resize_ratio': hp.choice('resize_ratio', [0.1]),
+        'max_samples_per_dataset': hp.choice('max_samples_per_dataset', [1000, 10000]),
     }
     if args.seed == 420:
         print('TEST MODE')
-        search_space['train_dataset_size'] = 100
+        search_space['max_samples_per_dataset'] = 100
         search_space['num_epochs'] = 2
         search_space['slice_depth'] = 2
         search_space['resize_ratio'] = 0.05

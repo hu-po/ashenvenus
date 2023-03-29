@@ -27,6 +27,7 @@ def train_valid_loop(
     max_samples_per_dataset: int = 100,
     output_dir: str = "output/train",
     run_name: str = "debug",
+    image_augs: bool = False,
     slice_depth: int = 3,
     patch_size_x: int = 512,
     patch_size_y: int = 128,
@@ -89,11 +90,19 @@ def train_valid_loop(
                 # Training vs Testing mode
                 train=True,
             )
-            img_transform = transforms.Compose([
-                transforms.Normalize(train_dataset.mean, train_dataset.std)
-            ])
             total_dataset_size = len(train_dataset)
             log.debug(f"Raw train dataset size: {total_dataset_size}")
+
+            # Add augmentations
+            img_transform_list = [
+                transforms.Normalize(train_dataset.mean, train_dataset.std)
+            ]
+            if image_augs:
+                img_transform_list += [
+                    transforms.RandomHorizontalFlip(),
+                    transforms.RandomVerticalFlip(),
+                ]
+            img_transform = transforms.Compose(img_transform_list)
 
             # DataLoaders
             train_dataloader = DataLoader(
@@ -110,8 +119,8 @@ def train_valid_loop(
             for patch, label in tqdm(train_dataloader):
                 # for patch, label in train_dataloader:
                 optimizer.zero_grad()
-                writer.add_histogram('patch_input', patch, step)
-                writer.add_histogram('label_input', label, step)
+                # writer.add_histogram('patch_input', patch, step)
+                # writer.add_histogram('label_input', label, step)
                 patch = patch.to(device)
                 patch = img_transform(patch)
                 pred = model(patch)

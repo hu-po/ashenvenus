@@ -27,12 +27,12 @@ def objective(hparams) -> float:
             'curriculum',
             'optimizer',
             'lr_scheduling_gamma',
-            'image_augs',
-            'patch_size_x',
-            'patch_size_y',
+            # 'image_augs',
+            # 'patch_size_x',
+            # 'patch_size_y',
             'resize_ratio',
-            'num_epochs',
-            'batch_size',
+            # 'num_epochs',
+            # 'batch_size',
             'lr',
             'max_samples_per_dataset',
         ]:
@@ -76,7 +76,7 @@ if __name__ == '__main__':
             '1',
             # '2',
             # '3',
-            # '123',
+            '123',
             '321',
         ]),
         'model': hp.choice('model', [
@@ -107,18 +107,18 @@ if __name__ == '__main__':
         'slice_depth': 65,
         'num_workers': 1,
         'batch_size': hp.choice('batch_size', [32]),
-        'lr': hp.loguniform('lr',  np.log(0.0001), np.log(0.1)),
+        'lr': hp.loguniform('lr',  np.log(0.000001), np.log(0.01)),
         'num_epochs': hp.choice('num_epochs', [6]),
         'patch_size_x': hp.choice('patch_size_x', [224]),
         'patch_size_y': hp.choice('patch_size_y', [224]),
         'resize_ratio': hp.choice('resize_ratio', [0.25]),
-        'max_samples_per_dataset': hp.choice('max_samples_per_dataset', [20000, 80000]),
+        'max_samples_per_dataset': hp.choice('max_samples_per_dataset', [80000]),
     }
     if args.seed == 420:
         print('TEST MODE')
-        search_space['max_samples_per_dataset'] = 100
+        search_space['max_samples_per_dataset'] = 64
         search_space['num_epochs'] = 2
-        search_space['slice_depth'] = 2
+        search_space['slice_depth'] = 65
         search_space['resize_ratio'] = 0.05
 
     # Run the optimization

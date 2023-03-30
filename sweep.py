@@ -40,28 +40,31 @@ def objective(hparams) -> float:
 
     # Add UUID to run name for ultimate uniqueness
     run_name += str(uuid.uuid4())[:8]
-
-    # Train and evaluate a TFLite model
-    loss: float = train_valid_loop(
-        train_dir=hparams['train_dir'],
-        model=hparams['model'],
-        freeze_backbone=hparams['freeze_backbone'],
-        optimizer=hparams['optimizer'],
-        lr_scheduling_gamma=hparams['lr_scheduling_gamma'],
-        curriculum=hparams['curriculum'],
-        image_augs=hparams['image_augs'],
-        output_dir="output/train/",
-        run_name=run_name,
-        slice_depth=hparams['slice_depth'],
-        patch_size_x=hparams['patch_size_x'],
-        patch_size_y=hparams['patch_size_y'],
-        resize_ratio=hparams['resize_ratio'],
-        batch_size=hparams['batch_size'],
-        lr=hparams['lr'],
-        num_epochs=hparams['num_epochs'],
-        num_workers=hparams['num_workers'],
-        max_samples_per_dataset=hparams['max_samples_per_dataset'],
-    )
+    try:
+        # Train and evaluate a TFLite model
+        loss: float = train_valid_loop(
+            train_dir=hparams['train_dir'],
+            model=hparams['model'],
+            freeze_backbone=hparams['freeze_backbone'],
+            optimizer=hparams['optimizer'],
+            lr_scheduling_gamma=hparams['lr_scheduling_gamma'],
+            curriculum=hparams['curriculum'],
+            image_augs=hparams['image_augs'],
+            output_dir="output/train/",
+            run_name=run_name,
+            slice_depth=hparams['slice_depth'],
+            patch_size_x=hparams['patch_size_x'],
+            patch_size_y=hparams['patch_size_y'],
+            resize_ratio=hparams['resize_ratio'],
+            batch_size=hparams['batch_size'],
+            lr=hparams['lr'],
+            num_epochs=hparams['num_epochs'],
+            num_workers=hparams['num_workers'],
+            max_samples_per_dataset=hparams['max_samples_per_dataset'],
+        )
+    except Exception as e:
+        log.error(e)
+        loss = 10000.0
     return loss
 
 

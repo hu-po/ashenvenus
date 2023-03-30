@@ -175,15 +175,15 @@ def train_valid_loop(
             print("Epoch %d: SGD lr %.4f -> %.4f" %
                   (epoch, before_lr, after_lr))
 
-    # evaluate(
-    #     model,
-    #     data_dir="data/test/a",
-    #     output_dir=output_dir,
-    #     slice_depth=slice_depth,
-    #     patch_size_x=patch_size_x,
-    #     patch_size_y=patch_size_y,
-    #     resize_ratio=resize_ratio,
-    # )
+    evaluate(
+        model,
+        data_dir="data/test/a",
+        output_dir=output_dir,
+        slice_depth=slice_depth,
+        patch_size_x=patch_size_x,
+        patch_size_y=patch_size_y,
+        resize_ratio=resize_ratio,
+    )
 
     writer.close()  # Close the SummaryWriter
     return best_loss

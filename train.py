@@ -1,19 +1,19 @@
-import torch
+import logging
 import os
 
-from model import SimpleNet, SimpleNetNorm
-from utils import get_device
-from dataset import PatchDataset
+import numpy as np
+import torch
+import torch.nn as nn
+import torch.optim.lr_scheduler as lr_scheduler
+from PIL import Image
+from tensorboardX import SummaryWriter
 from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
 from torchvision import transforms
-import torch.nn as nn
-from tensorboardX import SummaryWriter
 from tqdm import tqdm
-import numpy as np
-from PIL import Image
-import matplotlib.pyplot as plt
 
-import logging
+from dataset import PatchDataset
+from model import PreTrainNet, SimpleNet, SimpleNetNorm
+from utils import get_device
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
@@ -22,6 +22,7 @@ log = logging.getLogger(__name__)
 def train_valid_loop(
     train_dir: str = "data/train/",
     model: str = "simplenet",
+    freeze_backbone: bool = False,
     optimizer: str = "adam",
     curriculum: str = "1",
     max_samples_per_dataset: int = 100,
@@ -34,6 +35,7 @@ def train_valid_loop(
     resize_ratio: float = 1.0,
     batch_size: int = 16,
     lr: float = 0.001,
+    lr_scheduling_gamma: float = None,
     num_epochs: int = 2,
     num_workers: int = 16,
 ):
@@ -43,6 +45,30 @@ def train_valid_loop(
     if model == "simplenet":
         model = SimpleNet(
             slice_depth=slice_depth,
+        )
+    elif model == 'convnext_tiny':
+        model = PreTrainNet(
+            slice_depth=slice_depth,
+            pretrained_model='convnext_tiny',
+            freeze_backbone=freeze_backbone,
+        )
+    elif model == 'vit_b_32':
+        model = PreTrainNet(
+            slice_depth=slice_depth,
+            pretrained_model='vit_b_32',
+            freeze_backbone=freeze_backbone,
+        )
+    elif model == 'swin_t':
+        model = PreTrainNet(
+            slice_depth=slice_depth,
+            pretrained_model='swin_t',
+            freeze_backbone=freeze_backbone,
+        )
+    elif model == 'resnext50_32x4d':
+        model = PreTrainNet(
+            slice_depth=slice_depth,
+            pretrained_model='resnext50_32x4d',
+            freeze_backbone=freeze_backbone,
         )
     elif model == "simplenet_norm":
         model = SimpleNetNorm(
@@ -56,6 +82,9 @@ def train_valid_loop(
         optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     elif optimizer == "sgd":
         optimizer = torch.optim.SGD(model.parameters(), lr=lr)
+
+    if lr_scheduling_gamma is not None:
+        scheduler = lr_scheduler.ExponentialLR(optimizer, gamma=lr_scheduling_gamma)
 
     # Create directory based on run_name
     output_dir = os.path.join(output_dir, run_name)
@@ -108,7 +137,8 @@ def train_valid_loop(
             train_dataloader = DataLoader(
                 train_dataset,
                 batch_size=batch_size,
-                sampler=RandomSampler(train_dataset, num_samples=max_samples_per_dataset),
+                sampler=RandomSampler(
+                    train_dataset, num_samples=max_samples_per_dataset),
                 num_workers=num_workers,
                 # This will make it go faster if it is loaded into a GPU
                 pin_memory=True,
@@ -131,21 +161,29 @@ def train_valid_loop(
                 step += 1
                 train_loss += loss.item()
             train_loss /= max_samples_per_dataset
-            writer.add_scalar(f'{loss_fn.__class__.__name__}/{current_dataset_id}/train', train_loss, step)
+            writer.add_scalar(
+                f'{loss_fn.__class__.__name__}/{current_dataset_id}/train', train_loss, step)
 
             if train_loss < best_loss:
                 best_loss = train_loss
                 # torch.save(model.state_dict(), f"{output_dir}/model.pth")
 
-    evaluate(
-        model,
-        data_dir="data/test/a",
-        output_dir=output_dir,
-        slice_depth=slice_depth,
-        patch_size_x=patch_size_x,
-        patch_size_y=patch_size_y,
-        resize_ratio=resize_ratio,
-    )
+        if lr_scheduling_gamma is not None:
+            before_lr = optimizer.param_groups[0]["lr"]
+            scheduler.step()
+            after_lr = optimizer.param_groups[0]["lr"]
+            print("Epoch %d: SGD lr %.4f -> %.4f" %
+                  (epoch, before_lr, after_lr))
+
+    # evaluate(
+    #     model,
+    #     data_dir="data/test/a",
+    #     output_dir=output_dir,
+    #     slice_depth=slice_depth,
+    #     patch_size_x=patch_size_x,
+    #     patch_size_y=patch_size_y,
+    #     resize_ratio=resize_ratio,
+    # )
 
     writer.close()  # Close the SummaryWriter
     return best_loss
@@ -163,6 +201,7 @@ def evaluate(
 ):
     device = get_device()
     model = model.to(device)
+    model.eval()
 
     # Make output directory
     os.makedirs(output_dir, exist_ok=True)

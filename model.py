@@ -3,6 +3,12 @@ import logging
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torchvision.models import (
+    convnext_tiny, ConvNeXt_Tiny_Weights,
+    vit_b_32, ViT_B_32_Weights,
+    resnext50_32x4d, ResNeXt50_32X4D_Weights,
+    swin_t, Swin_T_Weights,
+)
 
 from utils import get_device
 
@@ -10,60 +16,45 @@ logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
 
 
-class ResidualBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size, stride, padding):
-        super(ResidualBlock, self).__init__()
-        self.conv1 = nn.Conv2d(in_channels, out_channels,
-                               kernel_size, stride, padding)
-        self.bn1 = nn.LazyBatchNorm2d(out_channels)
-        self.gelu = nn.GELU()
-        self.conv2 = nn.Conv2d(out_channels, out_channels,
-                               kernel_size, 1, padding)
-        self.bn2 = nn.LazyBatchNorm2d(out_channels)
-
-        self.shortcut = nn.Sequential()
-        if stride != 1 or in_channels != out_channels:
-            self.shortcut = nn.Sequential(
-                nn.Conv2d(in_channels, out_channels,
-                          kernel_size=1, stride=stride, padding=0),
-                nn.LazyBatchNorm2d(out_channels)
-            )
-
-    def forward(self, x):
-        out = self.gelu(self.bn1(self.conv1(x)))
-        out = self.bn2(self.conv2(out))
-        out += self.shortcut(x)
-        out = self.gelu(out)
-        return out
-
-
-class BinaryCNNClassifier(nn.Module):
+class PreTrainNet(nn.Module):
     def __init__(
         self,
         slice_depth: int = 65,
+        pretrained_model: str = 'convnext_tiny',
+        freeze_backbone: bool = False,
+        # pretrained_weights_filepath = '/kaggle/input/convnextimagenet/convnext_tiny-983f1562.pth',
+        # pretrained_weights_filepath='/home/tren/dev/ashenvenus/notebooks/convnext_tiny-983f1562.pth',
+
     ):
-        super(BinaryCNNClassifier, self).__init__()
-        self.layer1 = ResidualBlock(slice_depth, 128, 3, 2, 1)
-        self.layer2 = ResidualBlock(128, 256, 3, 2, 1)
-        self.layer3 = ResidualBlock(256, 512, 3, 2, 1)
-        self.max_pool = nn.MaxPool2d(2, 2)
-        self.fc = nn.LazyLinear(128)
-        self.relu = nn.ReLU()
-        self.fc2 = nn.LazyLinear(1)
+        super().__init__()
+        self.conv = nn.Conv2d(slice_depth, 3, 3)
+        # Load pretrained model
+        if pretrained_model == 'convnext_tiny':
+            _weights = ConvNeXt_Tiny_Weights.DEFAULT
+            self.pre_trained_model = convnext_tiny(weights=_weights)
+        elif pretrained_model == 'vit_b_32':
+            _weights = ViT_B_32_Weights.DEFAULT
+            self.pre_trained_model = vit_b_32(weights=_weights)
+        elif pretrained_model == 'swin_t':
+            _weights = Swin_T_Weights.DEFAULT
+            self.pre_trained_model = swin_t(weights=_weights)
+        elif pretrained_model == 'resnext50_32x4d':
+            _weights = ResNeXt50_32X4D_Weights.DEFAULT
+            self.pre_trained_model = resnext50_32x4d(weights=_weights)
+        # self.model.load_state_dict(pretrained_weights_filepath)
+        # Put model in training mode
+        if freeze_backbone:
+            self.pre_trained_model.eval()
+        else:
+            self.pre_trained_model.train()
+        # Binary classification head on top
+        self.fc = nn.LazyLinear(1)
 
     def forward(self, x):
-        # Model Body
-        out = self.layer1(x)
-        out = self.layer2(out)
-        out = self.layer3(out)
-        out = self.max_pool(out)
-        # Flatten
-        out = out.view(out.size(0), -1)
-        # Model Head
-        out = self.fc(out)
-        out = self.relu(out)
-        out = self.fc2(out)
-        return out
+        x = self.conv(x)
+        x = self.pre_trained_model(x)
+        x = self.fc(x)
+        return x
 
 
 class SimpleNet(nn.Module):
@@ -87,6 +78,7 @@ class SimpleNet(nn.Module):
         x = F.relu(self.fc2(x))
         x = self.fc3(x)
         return x
+
 
 class SimpleNetNorm(nn.Module):
     def __init__(
@@ -113,6 +105,7 @@ class SimpleNetNorm(nn.Module):
         x = F.relu(self.ln2(self.fc2(x)))
         x = self.fc3(x)
         return x
+
 
 if __name__ == '__main__':
     from torchviz import make_dot

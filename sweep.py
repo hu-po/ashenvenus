@@ -23,8 +23,10 @@ def objective(hparams) -> float:
         # Choose name of run based on hparams
         if key in [
             'model',
+            'freeze_backbone',
             'curriculum',
             'optimizer',
+            'lr_scheduling_gamma',
             'image_augs',
             'patch_size_x',
             'patch_size_y',
@@ -43,7 +45,9 @@ def objective(hparams) -> float:
     loss: float = train_valid_loop(
         train_dir=hparams['train_dir'],
         model=hparams['model'],
+        freeze_backbone=hparams['freeze_backbone'],
         optimizer=hparams['optimizer'],
+        lr_scheduling_gamma=hparams['lr_scheduling_gamma'],
         curriculum=hparams['curriculum'],
         image_augs=hparams['image_augs'],
         output_dir="output/train/",
@@ -77,7 +81,15 @@ if __name__ == '__main__':
         ]),
         'model': hp.choice('model', [
             'simplenet',
-            'simplenet_norm'
+            # 'simplenet_norm',
+            'convnext_tiny',
+            # 'vit_b_32',
+            'swin_t',
+            'resnext50_32x4d',
+        ]),
+        'freeze_backbone': hp.choice('freeze_backbone', [
+            True,
+            False,
         ]),
         'image_augs': hp.choice('image_augs', [
             # True,
@@ -85,15 +97,20 @@ if __name__ == '__main__':
         ]),
         'optimizer': hp.choice('optimizer', [
             'adam',
-            # 'sgd'
+            'sgd',
+        ]),
+        'lr_scheduling_gamma': hp.choice('lr_scheduling_gamma', [
+            0.1,
+            0.9,
+            None,
         ]),
         'slice_depth': 65,
         'num_workers': 1,
-        'batch_size': hp.choice('batch_size', [128]),
+        'batch_size': hp.choice('batch_size', [32]),
         'lr': hp.loguniform('lr',  np.log(0.0001), np.log(0.1)),
         'num_epochs': hp.choice('num_epochs', [6]),
-        'patch_size_x': hp.choice('patch_size_x', [256]),
-        'patch_size_y': hp.choice('patch_size_y', [128]),
+        'patch_size_x': hp.choice('patch_size_x', [224]),
+        'patch_size_y': hp.choice('patch_size_y', [224]),
         'resize_ratio': hp.choice('resize_ratio', [0.25]),
         'max_samples_per_dataset': hp.choice('max_samples_per_dataset', [20000, 80000]),
     }

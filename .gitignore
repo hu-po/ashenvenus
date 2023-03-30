@@ -10,6 +10,9 @@ model_graph*
 # Submissions
 submission.csv
 
+# Model weights
+*.pth
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

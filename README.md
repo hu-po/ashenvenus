@@ -82,3 +82,14 @@ resize_ratio = 0.5, 0.25
 train_dataset_size = 10000, 1000000
 valid_dataset_size = 1000
 ```
+
+### Sweep 2 Results (03/27/2023)
+
+Best results
+
+```
+optimizer = adam
+curriculum = 321, 1
+image_augs = False
+max_samples_per_dataset = 80000
+```

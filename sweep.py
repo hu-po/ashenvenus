@@ -70,29 +70,32 @@ if __name__ == '__main__':
         'train_dir': 'data/train',
         'curriculum': hp.choice('curriculum', [
             '1',
-            '2',
-            '3',
-            '123',
+            # '2',
+            # '3',
+            # '123',
             '321',
         ]),
         'model': hp.choice('model', [
             'simplenet',
             'simplenet_norm'
         ]),
-        'image_augs': hp.choice('image_augs', [True, False]),
+        'image_augs': hp.choice('image_augs', [
+            # True,
+            False,
+        ]),
         'optimizer': hp.choice('optimizer', [
             'adam',
-            'sgd'
+            # 'sgd'
         ]),
         'slice_depth': 65,
         'num_workers': 1,
-        'batch_size': hp.choice('batch_size', [64]),
-        'lr': hp.loguniform('lr',  np.log(0.00001), np.log(0.001)),
+        'batch_size': hp.choice('batch_size', [128]),
+        'lr': hp.loguniform('lr',  np.log(0.0001), np.log(0.1)),
         'num_epochs': hp.choice('num_epochs', [6]),
-        'patch_size_x': hp.choice('patch_size_x', [128]),
-        'patch_size_y': hp.choice('patch_size_y', [64]),
-        'resize_ratio': hp.choice('resize_ratio', [0.1]),
-        'max_samples_per_dataset': hp.choice('max_samples_per_dataset', [1000, 10000]),
+        'patch_size_x': hp.choice('patch_size_x', [256]),
+        'patch_size_y': hp.choice('patch_size_y', [128]),
+        'resize_ratio': hp.choice('resize_ratio', [0.25]),
+        'max_samples_per_dataset': hp.choice('max_samples_per_dataset', [20000, 80000]),
     }
     if args.seed == 420:
         print('TEST MODE')

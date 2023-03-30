@@ -131,7 +131,7 @@ def train_valid_loop(
                 step += 1
                 train_loss += loss.item()
             train_loss /= max_samples_per_dataset
-            writer.add_scalar(f'{loss_fn.__class__.__name__}/train', train_loss, step)
+            writer.add_scalar(f'{loss_fn.__class__.__name__}/{current_dataset_id}/train', train_loss, step)
 
             if train_loss < best_loss:
                 best_loss = train_loss
@@ -209,8 +209,8 @@ def evaluate(
 
         pred_image[pixel_index[0], pixel_index[1]] = pred
 
-        # if pred > threshold:
-        #     pred_image[pixel_index[0], pixel_index[1]] = 1
+        if pred > threshold:
+            pred_image[pixel_index[0], pixel_index[1]] = 1
 
     # Save the prediction image
     _img = Image.fromarray(pred_image * 255)

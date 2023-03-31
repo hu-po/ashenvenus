@@ -1,96 +1,47 @@
-# Ashen Venus
+# 🌋 AshenVenus 🌋
 
-Venus was the patron saint of Pompeii, the city covered in Ash.
+This repo is an open source entry to the [2023 Scroll Prize](https://scrollprize.org/) aka _The Vesuvius Challenge_. The name for this repo comes from [Venus](https://en.wikipedia.org/wiki/Venus_(mythology)#Iconography), who was the patron saint of [Pompeii](https://en.wikipedia.org/wiki/Pompeii), the city covered in Ash by the volcano Vesuvius.
 
-This repo is an entry to the [Vesuvius Challenge or Scroll Prize](https://scrollprize.org/)
+![roman village at the foot of a large erupting volcano, ancient mosaic fresco, apocalypse, fantasy digital art, roman columns villa --v 5 --ar 2:1](images/banner.png)
 
-## Setup
+### Setup
 
 ```
-conda create -n ashenvenus python=3.7
 pip install -r requirements.txt
 ```
 
-OR
+### Training
+
+To run a hyperparameter sweep use:
 
 ```
-conda env create --file environment.yaml
+python sweep.py --seed 0
 ```
 
-## Stream 2: Designing the model
+## YouTube
 
-Inspirations
+This repo was built live on YouTube, you can find the playlist here:
 
-### ConvNext
+[![IMAGE_ALT](https://img.youtube.com/vi/J63V5n5OwMA/0.jpg)](https://youtube.com/playlist?list=PLwq2F0NejwX5Hc80-ExN9JfnbMAHR7HAn)
 
-![ConvNext](images/convnext.png)
-- GeLU is better than ReLU
-- Residual connections
-- Layer Norm
-- 7x7 kernels followed by 1x1 kernels
+## Sources
 
-### UNet
+Various sources used for reference:
 
-![3d UNet](images/unet.png)
-- Bx64x64x64x32
-- Max pools before reducing dimmension
-- Batch Norms into ReLU
+- [PyTorch Pre-trained Models](https://pytorch.org/vision/main/models.html)
+- [Pretrained ViT Multiscale Vision Transformers](https://arxiv.org/pdf/2104.11227.pdf)
+- [Pretrained Video Transformer (SWIN)](https://github.com/pytorch/vision/blob/main/torchvision/models/video/swin_transformer.py)
+- [A ConvNet for the 2020s](https://arxiv.org/pdf/2201.03545.pdf)
+- [Adapting Pre-trained Vision Transformers from 2D to 3D through Weight Inflation Improves Medical Image Segmentation](https://proceedings.mlr.press/v193/zhang22a/zhang22a.pdf)
 
-### Our problem
 
-Input is a 3D volume of
-- Small Bx65x1x1
-- Large Bx65x1028x256
-
-Output is single number representing ink or no ink
-- Bx1
-- Binary classification
-- activation function is sigmoid
-
-Memory is available in our compute?
-
-- Local training 2x8GB (2xNVIDIA GeForce GTX 1080 Ti)
-- Notebook training 2x16GB (2xNVIDIA T4)
-
-### Prompts
-
-Can you design a PyTorch model for me in Python. I want a Convolutional network with the following specs:
-- Input size is BxCx512x128 where B is the batch size, C is the number of channels
-- Output size is Bx1 (binary classification)
-- Maximum memory size is 16GB
-- I want to use BatchNorm
-- I want to use GeLU activations
-- I want to use Residual connections
-
-## Sweeping
+## Citation
 
 ```
-CUDA_VISIBLE_DEVICES=0 python sweep.py --seed 0
-
-CUDA_VISIBLE_DEVICES=1 python sweep.py --seed 1
-```
-
-### Sweep 1 Results (03/27/2023)
-
-Best 2 results
-
-```
-batch_size = 32
-learning_rate = 0.0004
-patch_size_x = 128, 512
-patch_size_y = 64, 32
-resize_ratio = 0.5, 0.25
-train_dataset_size = 10000, 1000000
-valid_dataset_size = 1000
-```
-
-### Sweep 2 Results (03/27/2023)
-
-Best results
-
-```
-optimizer = adam
-curriculum = 321, 1
-image_augs = False
-max_samples_per_dataset = 80000
+@misc{ashenvenus-vesuvius-challenge-2023,
+  title={AshenVenus: Open Source Entry to the 2023 Scroll Prize},
+  author={Hugo Ponte},
+  year={2023},
+  url={https://github.com/hu-po/ashenvenus}
+}
 ```

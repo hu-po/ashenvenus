@@ -289,7 +289,7 @@ def evaluate_sweep(
     # DataLoaders
     eval_dataloader = DataLoader(
         eval_dataset,
-        batch_size=1,
+        batch_size=batch_size,
         sampler=SequentialSampler(eval_dataset),
         num_workers=num_workers,
         # This will make it go faster if it is loaded into a GPU
@@ -355,7 +355,7 @@ def evaluate_submit(
     # DataLoaders
     eval_dataloader = DataLoader(
         eval_dataset,
-        batch_size=1,
+        batch_size=batch_size,
         sampler=SequentialSampler(eval_dataset),
         num_workers=num_workers,
         # This will make it go faster if it is loaded into a GPU

@@ -97,21 +97,22 @@ if __name__ == '__main__':
             '3',
             '123',
             '321',
+            '13',
         ]),
         'model': hp.choice('model', [
-            # 'simplenet',
-            # 'simplenet_norm',
+            'simplenet',
+            'simplenet_norm',
             'convnext_tiny',
             'swin_t',
             'resnext50_32x4d',
-            # 'vit_b_32',
+            'vit_b_32',
         ]),
         'freeze_backbone': hp.choice('freeze_backbone', [
             True,
             False,
         ]),
         'image_augs': hp.choice('image_augs', [
-            # True,
+            True,
             False,
         ]),
         'optimizer': hp.choice('optimizer', [

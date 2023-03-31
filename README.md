@@ -1,7 +1,8 @@
 # Ashen Venus
 
-Entry to the [Vesuvius Challenge](https://scrollprize.org/)
+Venus was the patron saint of Pompeii, the city covered in Ash.
 
+This repo is an entry to the [Vesuvius Challenge or Scroll Prize](https://scrollprize.org/)
 
 ## Setup
 

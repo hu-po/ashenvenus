@@ -1,5 +1,6 @@
 import logging
 import uuid
+import os
 
 import pprint
 import numpy as np
@@ -18,7 +19,8 @@ def objective(hparams) -> float:
     # Print hyperparam dict with logging
     log.info(f"\n\nHyperparams:\n\n{pprint.pformat(hparams)}\n\n")
 
-    run_name: str = 'run'
+    # Add UUID to run name for ultimate uniqueness
+    run_name: str = str(uuid.uuid4())[:8] + '_'
     for key, value in hparams.items():
         # Choose name of run based on hparams
         if key in [
@@ -38,29 +40,36 @@ def objective(hparams) -> float:
         ]:
             run_name += f'{key}_{str(value)}_'
 
-    # Add UUID to run name for ultimate uniqueness
-    run_name += str(uuid.uuid4())[:8]
+    # Create directory based on run_name
+    output_dir = os.path.join(output_dir, run_name)
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Save hyperparams to file
+    with open(os.path.join(output_dir, 'hparams.txt'), 'w') as f:
+        f.write(pprint.pformat(hparams))
+    
     try:
         # Train and evaluate a TFLite model
         loss: float = train_valid_loop(
+            # Directories and datasets
+            output_dir=output_dir,
             train_dir=hparams['train_dir'],
+            curriculum=hparams['curriculum'],
+            image_augs=hparams['image_augs'],
+            resize_ratio=hparams['resize_ratio'],
+            num_workers=hparams['num_workers'],
+            max_samples_per_dataset=hparams['max_samples_per_dataset'],
+            # Model and training
             model=hparams['model'],
             freeze_backbone=hparams['freeze_backbone'],
             optimizer=hparams['optimizer'],
             lr_scheduling_gamma=hparams['lr_scheduling_gamma'],
-            curriculum=hparams['curriculum'],
-            image_augs=hparams['image_augs'],
-            output_dir="output/train/",
-            run_name=run_name,
             slice_depth=hparams['slice_depth'],
             patch_size_x=hparams['patch_size_x'],
             patch_size_y=hparams['patch_size_y'],
-            resize_ratio=hparams['resize_ratio'],
             batch_size=hparams['batch_size'],
             lr=hparams['lr'],
             num_epochs=hparams['num_epochs'],
-            num_workers=hparams['num_workers'],
-            max_samples_per_dataset=hparams['max_samples_per_dataset'],
         )
     except Exception as e:
         log.error(e)
@@ -77,18 +86,18 @@ if __name__ == '__main__':
         'train_dir': 'data/train',
         'curriculum': hp.choice('curriculum', [
             '1',
-            # '2',
-            # '3',
+            '2',
+            '3',
             '123',
             '321',
         ]),
         'model': hp.choice('model', [
-            'simplenet',
+            # 'simplenet',
             # 'simplenet_norm',
             'convnext_tiny',
-            # 'vit_b_32',
             'swin_t',
             'resnext50_32x4d',
+            # 'vit_b_32',
         ]),
         'freeze_backbone': hp.choice('freeze_backbone', [
             True,
@@ -100,12 +109,12 @@ if __name__ == '__main__':
         ]),
         'optimizer': hp.choice('optimizer', [
             'adam',
-            'sgd',
+            # 'sgd', # Trains slower and no good
         ]),
         'lr_scheduling_gamma': hp.choice('lr_scheduling_gamma', [
             0.1,
             0.9,
-            None,
+            # None,
         ]),
         'slice_depth': 65,
         'num_workers': 1,

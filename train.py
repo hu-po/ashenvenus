@@ -27,7 +27,6 @@ def train_valid_loop(
     curriculum: str = "1",
     max_samples_per_dataset: int = 100,
     output_dir: str = "output/train",
-    run_name: str = "debug",
     image_augs: bool = False,
     slice_depth: int = 3,
     patch_size_x: int = 512,
@@ -85,10 +84,6 @@ def train_valid_loop(
 
     if lr_scheduling_gamma is not None:
         scheduler = lr_scheduler.ExponentialLR(optimizer, gamma=lr_scheduling_gamma)
-
-    # Create directory based on run_name
-    output_dir = os.path.join(output_dir, run_name)
-    os.makedirs(output_dir, exist_ok=True)
 
     # Writer for Tensorboard
     writer = SummaryWriter(output_dir)
@@ -178,6 +173,16 @@ def train_valid_loop(
     evaluate(
         model,
         data_dir="data/test/a",
+        output_dir=output_dir,
+        slice_depth=slice_depth,
+        patch_size_x=patch_size_x,
+        patch_size_y=patch_size_y,
+        resize_ratio=resize_ratio,
+    )
+
+    evaluate(
+        model,
+        data_dir="data/test/b",
         output_dir=output_dir,
         slice_depth=slice_depth,
         patch_size_x=patch_size_x,

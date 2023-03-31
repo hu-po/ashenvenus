@@ -17,7 +17,7 @@ log = logging.getLogger(__name__)
 def objective(hparams) -> float:
 
     # Print hyperparam dict with logging
-    log.info(f"\n\nHyperparams:\n\n{pprint.pformat(hparams)}\n\n")
+    print(f"\n\nHyperparams:\n\n{pprint.pformat(hparams)}\n\n")
 
     # Add UUID to run name for ultimate uniqueness
     run_name: str = str(uuid.uuid4())[:8] + '_'

@@ -22,26 +22,39 @@ class PreTrainNet(nn.Module):
         slice_depth: int = 65,
         pretrained_model: str = 'convnext_tiny',
         freeze_backbone: bool = False,
+        pretrained_weights_filepath: str = None,
         # pretrained_weights_filepath = '/kaggle/input/convnextimagenet/convnext_tiny-983f1562.pth',
         # pretrained_weights_filepath='/home/tren/dev/ashenvenus/notebooks/convnext_tiny-983f1562.pth',
-
     ):
         super().__init__()
         self.conv = nn.Conv2d(slice_depth, 3, 3)
         # Load pretrained model
         if pretrained_model == 'convnext_tiny':
-            _weights = ConvNeXt_Tiny_Weights.DEFAULT
-            self.pre_trained_model = convnext_tiny(weights=_weights)
+            if pretrained_weights_filepath is not None:
+                self.pre_trained_model = convnext_tiny()
+            else:
+                _weights = ConvNeXt_Tiny_Weights.DEFAULT
+                self.pre_trained_model = convnext_tiny(weights=_weights)
         elif pretrained_model == 'vit_b_32':
-            _weights = ViT_B_32_Weights.DEFAULT
-            self.pre_trained_model = vit_b_32(weights=_weights)
+            if pretrained_weights_filepath is not None:
+                self.pre_trained_model = vit_b_32()
+            else:
+                _weights = ViT_B_32_Weights.DEFAULT
+                self.pre_trained_model = vit_b_32(weights=_weights)
         elif pretrained_model == 'swin_t':
-            _weights = Swin_T_Weights.DEFAULT
-            self.pre_trained_model = swin_t(weights=_weights)
+            if pretrained_weights_filepath is not None:
+                self.pre_trained_model = swin_t()
+            else:
+                _weights = Swin_T_Weights.DEFAULT
+                self.pre_trained_model = swin_t(weights=_weights)
         elif pretrained_model == 'resnext50_32x4d':
-            _weights = ResNeXt50_32X4D_Weights.DEFAULT
-            self.pre_trained_model = resnext50_32x4d(weights=_weights)
-        # self.model.load_state_dict(pretrained_weights_filepath)
+            if pretrained_weights_filepath is not None:
+                self.pre_trained_model = resnext50_32x4d()
+            else:
+                _weights = ResNeXt50_32X4D_Weights.DEFAULT
+                self.pre_trained_model = resnext50_32x4d(weights=_weights)
+        if pretrained_weights_filepath is not None:
+            self.model.load_state_dict(pretrained_weights_filepath)
         # Put model in training mode
         if freeze_backbone:
             self.pre_trained_model.eval()
@@ -132,7 +145,7 @@ if __name__ == '__main__':
             'suffix': 'MB', 'precision': 0},
     ]]
 
-    log.debug("\n\n GPU usage after data is loaded")
+    print("\n\n GPU usage after data is loaded")
     showUtilization(attrList=attrList)
 
     # Test the model fits into the GPU
@@ -140,19 +153,19 @@ if __name__ == '__main__':
     model = SimpleNet()
     model.to(device)
 
-    log.debug("\n\n GPU usage after model is loaded")
+    print("\n\n GPU usage after model is loaded")
     showUtilization(attrList=attrList)
 
     # Fake data to test the model
     x = torch.randn(INPUT_SHAPE, dtype=torch.float32).to(device)
 
-    log.debug("\n\n GPU usage after data is loaded")
+    print("\n\n GPU usage after data is loaded")
     showUtilization(attrList=attrList)
 
     y = model(x)
 
     # Print out the model information
-    log.debug(model)
+    print(model)
 
     def get_bytes_per_parameter(model: torch.nn.Module):
         for parameter in model.parameters():
@@ -168,7 +181,7 @@ if __name__ == '__main__':
     _bytes_per_parameter = get_bytes_per_parameter(model)
     # Model size in GB
     _model_size_gb = _model_size * _bytes_per_parameter / 1024 / 1024 / 1024
-    log.debug(f"Model Size: {_model_size_gb} GB")
+    print(f"Model Size: {_model_size_gb} GB")
 
     # Print out the model graph
     make_dot(y, params=dict(model.named_parameters())

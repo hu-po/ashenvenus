@@ -1,4 +1,3 @@
-import logging
 import os
 import time
 
@@ -16,15 +15,13 @@ from dataset import PatchDataset
 from model import PreTrainNet, SimpleNet, SimpleNetNorm
 from utils import clear_gpu_memory, get_device, rle
 
-logging.basicConfig(level=logging.INFO)
-log = logging.getLogger(__name__)
-
 
 def train_loop(
     train_dir: str = "data/train/",
     eval_dir: str = "data/eval/",
     model: str = "simplenet",
     freeze_backbone: bool = False,
+    pretrained_weights_filepath: str = None,
     optimizer: str = "adam",
     curriculum: str = "1",
     max_samples_per_dataset: int = 100,
@@ -45,6 +42,7 @@ def train_loop(
     max_time_hours: float = 8,
 ):
     device = get_device()
+    clear_gpu_memory()
 
     # Notebook will only run for this amount of time
     time_train_max_seconds = max_time_hours * 60 * 60
@@ -61,24 +59,28 @@ def train_loop(
             slice_depth=slice_depth,
             pretrained_model='convnext_tiny',
             freeze_backbone=freeze_backbone,
+            pretrained_weights_filepath=pretrained_weights_filepath,
         )
     elif model == 'vit_b_32':
         model = PreTrainNet(
             slice_depth=slice_depth,
             pretrained_model='vit_b_32',
             freeze_backbone=freeze_backbone,
+            pretrained_weights_filepath=pretrained_weights_filepath,
         )
     elif model == 'swin_t':
         model = PreTrainNet(
             slice_depth=slice_depth,
             pretrained_model='swin_t',
             freeze_backbone=freeze_backbone,
+            pretrained_weights_filepath=pretrained_weights_filepath,
         )
     elif model == 'resnext50_32x4d':
         model = PreTrainNet(
             slice_depth=slice_depth,
             pretrained_model='resnext50_32x4d',
             freeze_backbone=freeze_backbone,
+            pretrained_weights_filepath=pretrained_weights_filepath,
         )
     elif model == "simplenet_norm":
         model = SimpleNetNorm(
@@ -105,7 +107,7 @@ def train_loop(
     best_loss = 0
     step = 0
     for epoch in range(num_epochs):
-        log.info(f"Epoch: {epoch}")
+        print(f"Epoch: {epoch}")
 
         # Curriculum defines the order of the training
         for current_dataset_id in curriculum:
@@ -386,25 +388,3 @@ def evaluate_submit(
     inklabels_rle = " ".join(map(str, sum(zip(starts_ix, lengths), ())))
     with open(submission_filepath, 'a') as f:
         f.write(f"{subtest_name},{inklabels_rle}\n")
-
-
-if __name__ == '__main__':
-    log.setLevel(logging.DEBUG)
-    slice_depth = 2
-    patch_size_x = 128
-    patch_size_y = 32
-    resize_ratio = 0.25
-
-    trained_model = train_loop(
-        train_dir="data/train/",
-        slice_depth=slice_depth,
-        patch_size_x=patch_size_x,
-        patch_size_y=patch_size_y,
-        resize_ratio=resize_ratio,
-        curriculum='123',
-        max_samples_per_dataset=100,
-        batch_size=128,
-        lr=0.001,
-        num_epochs=2,
-        num_workers=16,
-    )

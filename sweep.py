@@ -5,7 +5,7 @@ import os
 import pprint
 import numpy as np
 from hyperopt import fmin, hp, tpe
-from train import train_valid_loop
+from train import train_loop
 import argparse
 
 parser = argparse.ArgumentParser()
@@ -41,7 +41,7 @@ def objective(hparams) -> float:
             run_name += f'{key}_{str(value)}_'
 
     # Create directory based on run_name
-    output_dir = os.path.join(output_dir, run_name)
+    output_dir = os.path.join(hparams['output_dir'], run_name)
     os.makedirs(output_dir, exist_ok=True)
 
     # Save hyperparams to file
@@ -50,10 +50,11 @@ def objective(hparams) -> float:
     
     try:
         # Train and evaluate a TFLite model
-        loss: float = train_valid_loop(
+        loss: float = train_loop(
             # Directories and datasets
             output_dir=output_dir,
             train_dir=hparams['train_dir'],
+            eval_dir=hparams['eval_dir'],
             curriculum=hparams['curriculum'],
             image_augs=hparams['image_augs'],
             resize_ratio=hparams['resize_ratio'],
@@ -70,6 +71,10 @@ def objective(hparams) -> float:
             batch_size=hparams['batch_size'],
             lr=hparams['lr'],
             num_epochs=hparams['num_epochs'],
+            run_eval_sweep=True,
+            run_eval_submit=False,
+            write_logs = True,
+            max_time_hours = 8,
         )
     except Exception as e:
         log.error(e)
@@ -83,7 +88,9 @@ if __name__ == '__main__':
 
     # Define the search space
     search_space = {
+        'output_dir': 'output',
         'train_dir': 'data/train',
+        'eval_dir': 'data/test',
         'curriculum': hp.choice('curriculum', [
             '1',
             '2',
@@ -130,7 +137,7 @@ if __name__ == '__main__':
         print('TEST MODE')
         search_space['max_samples_per_dataset'] = 64
         search_space['num_epochs'] = 2
-        search_space['slice_depth'] = 65
+        search_space['slice_depth'] = 2
         search_space['resize_ratio'] = 0.05
 
     # Run the optimization

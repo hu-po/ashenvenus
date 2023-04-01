@@ -71,8 +71,8 @@ def objective(hparams) -> float:
             batch_size=hparams['batch_size'],
             lr=hparams['lr'],
             num_epochs=hparams['num_epochs'],
-            run_eval_sweep=True,
-            run_eval_submit=False,
+            save_pred_img=True,
+            save_submit_csv=False,
             write_logs = True,
             max_time_hours = 8,
         )

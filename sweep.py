@@ -126,10 +126,10 @@ if __name__ == '__main__':
         'batch_size': hp.choice('batch_size', [args.batch_size]),
         'lr': hp.loguniform('lr',  np.log(0.000001), np.log(0.01)),
         'num_epochs': hp.choice('num_epochs', [6]),
-        'patch_size_x': hp.choice('patch_size_x', [224]),
-        'patch_size_y': hp.choice('patch_size_y', [224]),
-        'resize_ratio': hp.choice('resize_ratio', [0.25]),
-        'max_samples_per_dataset': hp.choice('max_samples_per_dataset', [80000]),
+        'patch_size_x': hp.choice('patch_size_x', [64]),
+        'patch_size_y': hp.choice('patch_size_y', [64]),
+        'resize_ratio': hp.choice('resize_ratio', [0.08]),
+        'max_samples_per_dataset': hp.choice('max_samples_per_dataset', [100000, 50000]),
     }
     if args.seed == 420:
         print('TEST MODE')

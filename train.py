@@ -246,7 +246,8 @@ class PreTrainNet(nn.Module):
                 _weights = ResNeXt50_32X4D_Weights.DEFAULT
                 self.pre_trained_model = resnext50_32x4d(weights=_weights)
         if pretrained_weights_filepath is not None:
-            self.model.load_state_dict(pretrained_weights_filepath)
+            _state_dict = torch.load(pretrained_weights_filepath)
+            self.pre_trained_model.load_state_dict(_state_dict)
         # Put model in training mode
         if freeze_backbone:
             self.pre_trained_model.eval()

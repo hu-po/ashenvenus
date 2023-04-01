@@ -97,12 +97,12 @@ if __name__ == '__main__':
             '13',
         ]),
         'model': hp.choice('model', [
-            'simplenet',
-            'simplenet_norm',
+            # 'simplenet',
+            # 'simplenet_norm',
             'convnext_tiny',
-            'swin_t',
-            'resnext50_32x4d',
-            'vit_b_32',
+            # 'swin_t',
+            # 'resnext50_32x4d',
+            # 'vit_b_32',
         ]),
         'freeze_backbone': hp.choice('freeze_backbone', [
             True,
@@ -114,22 +114,22 @@ if __name__ == '__main__':
         ]),
         'optimizer': hp.choice('optimizer', [
             'adam',
-            # 'sgd', # Trains slower and no good
+            'sgd', # Trains slower and no good
         ]),
         'lr_scheduling_gamma': hp.choice('lr_scheduling_gamma', [
             0.1,
             0.9,
-            # None,
+            None,
         ]),
         'slice_depth': 65,
-        'num_workers': 1,
+        'num_workers': 0,
         'batch_size': hp.choice('batch_size', [args.batch_size]),
         'lr': hp.loguniform('lr',  np.log(0.000001), np.log(0.01)),
-        'num_epochs': hp.choice('num_epochs', [6]),
+        'num_epochs': hp.choice('num_epochs', [2, 8, 16]),
         'patch_size_x': hp.choice('patch_size_x', [64]),
         'patch_size_y': hp.choice('patch_size_y', [64]),
         'resize_ratio': hp.choice('resize_ratio', [0.08]),
-        'max_samples_per_dataset': hp.choice('max_samples_per_dataset', [100000, 50000]),
+        'max_samples_per_dataset': hp.choice('max_samples_per_dataset', [120000, 60000, 10000, 1000]),
     }
     if args.seed == 420:
         print('TEST MODE')

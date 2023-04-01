@@ -45,7 +45,7 @@ class PatchDataset(data.Dataset):
         image_labels_filename='inklabels.png',
         slices_dir_filename='surface_volume',
     ):
-        print(f"Initializing CurriculumDataset")
+        print(f"Creating CurriculumDataset for {data_dir}")
         # Train mode also loads the labels
         self.train = train
         # Resize ratio reduces the size of the image
@@ -307,6 +307,7 @@ def train_loop(
     write_logs: bool = False,
     save_pred_img: bool = False,
     save_submit_csv: bool = False,
+    save_model: bool = False,
     threshold: float = 0.5,
     max_time_hours: float = 8,
 ):
@@ -446,9 +447,9 @@ def train_loop(
                 writer.add_scalar(
                     f'{loss_fn.__class__.__name__}/{current_dataset_id}/train', train_loss, step)
 
-            if train_loss < best_loss:
+            if save_model and train_loss < best_loss:
                 best_loss = train_loss
-                # torch.save(model.state_dict(), f"{output_dir}/model.pth")
+                torch.save(model.state_dict(), f"{output_dir}/model.pth")
 
             # Check if we have exceeded the time limit
             time_elapsed = time.time() - time_start
@@ -474,6 +475,7 @@ def train_loop(
 
     del train_dataloader, train_dataset
     clear_gpu_memory()
+    model.eval()
 
     if save_submit_csv:
         # Create submission file
@@ -487,8 +489,6 @@ def train_loop(
 
         # Name of sub-directory inside test dir
         subtest_filepath = os.path.join(eval_dir, subtest_name)
-
-        model.eval()
 
         # Evaluation dataset
         eval_dataset = PatchDataset(
@@ -521,6 +521,7 @@ def train_loop(
         # Make a blank prediction image
         pred_image = np.zeros(eval_dataset.resized_size, dtype=np.uint8).T
         print(f"Prediction image {subtest_name} shape: {pred_image.shape}")
+        print(f"Prediction image min: {pred_image.min()}, max: {pred_image.max()}")
 
         for i, batch in enumerate(tqdm(eval_dataloader)):
             batch = batch.to(device)
@@ -535,7 +536,9 @@ def train_loop(
                 pred_image[pixel_index[0], pixel_index[1]] = pred
 
         if save_pred_img:
-            # Save the prediction image
+            print("Saving prediction image...")
+            print(f"Prediction image {subtest_name} shape: {_img.size}")
+            print(f"Prediction image min: {pred_image.min()}, max: {pred_image.max()}")
             _img = Image.fromarray(pred_image * 255)
             _img.save(f"{output_dir}/pred_image_{subtest_name}.png")
 

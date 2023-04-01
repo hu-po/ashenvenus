@@ -1,4 +1,3 @@
-import logging
 import uuid
 import os
 
@@ -10,9 +9,7 @@ import argparse
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--seed', type=int, default=0)
-
-logging.basicConfig(level=logging.INFO)
-log = logging.getLogger(__name__)
+parser.add_argument('--batch_size', type=int, default=32)
 
 def objective(hparams) -> float:
 
@@ -74,16 +71,16 @@ def objective(hparams) -> float:
             save_pred_img=True,
             save_submit_csv=False,
             write_logs = True,
+            save_model=True,
             max_time_hours = 8,
         )
     except Exception as e:
-        log.error(e)
+        print(f"\n\n Model Training FAILED with \n{e}\n\n")
         loss = 10000.0
     return loss
 
 
 if __name__ == '__main__':
-    log.setLevel(logging.DEBUG)
     args = parser.parse_args()
 
     # Define the search space
@@ -126,7 +123,7 @@ if __name__ == '__main__':
         ]),
         'slice_depth': 65,
         'num_workers': 1,
-        'batch_size': hp.choice('batch_size', [32]),
+        'batch_size': hp.choice('batch_size', [args.batch_size]),
         'lr': hp.loguniform('lr',  np.log(0.000001), np.log(0.01)),
         'num_epochs': hp.choice('num_epochs', [6]),
         'patch_size_x': hp.choice('patch_size_x', [224]),

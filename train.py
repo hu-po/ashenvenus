@@ -519,7 +519,7 @@ def train_loop(
         ])
 
         # Make a blank prediction image
-        pred_image = np.zeros(eval_dataset.resized_size, dtype=np.uint8).T
+        pred_image = np.zeros(eval_dataset.resized_size, dtype=np.float32).T
         print(f"Prediction image {subtest_name} shape: {pred_image.shape}")
         print(f"Prediction image min: {pred_image.min()}, max: {pred_image.max()}")
 
@@ -537,9 +537,7 @@ def train_loop(
 
         if save_pred_img:
             print("Saving prediction image...")
-            print(f"Prediction image {subtest_name} shape: {_img.size}")
-            print(f"Prediction image min: {pred_image.min()}, max: {pred_image.max()}")
-            _img = Image.fromarray(pred_image * 255)
+            _img = Image.fromarray(pred_image * 255).convert('1')
             _img.save(f"{output_dir}/pred_image_{subtest_name}.png")
 
         if save_submit_csv:
@@ -557,5 +555,3 @@ def train_loop(
                 f.write(f"{subtest_name},{inklabels_rle}\n")
 
     return best_loss
-
-

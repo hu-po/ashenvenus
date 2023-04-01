@@ -536,6 +536,10 @@ def train_loop(
                 pixel_index = eval_dataset.mask_indices[i * batch_size + j]
                 pred_image[pixel_index[0], pixel_index[1]] = pred
 
+        if write_logs:
+            print("Writing prediction image to TensorBoard...")
+            writer.add_image(f'pred_image_{subtest_name}', pred_image, step)
+
         if save_pred_img:
             print("Saving prediction image...")
             _img = Image.fromarray(pred_image * 255).convert('1')

@@ -86,15 +86,17 @@ search_space = {
     'train_dir': 'data/train',
     'eval_dir': 'data/test',
     'curriculum': hp.choice('curriculum', [
+        # All 3 performs better, order doesn't seem to matter
         # '1',
         # '2',
         # '3',
+        # '13',
+        # '32',
         '123',
         '321',
-        '13',
-        '32',
     ]),
     'model': hp.choice('model', [
+        # Doesn't seem to matter much, all models perform similarly, even simplenet
         'simplenet',
         'convnext_tiny', # Good
         # 'swin_t',
@@ -102,15 +104,18 @@ search_space = {
         # 'vit_b_32',
     ]),
     'freeze_backbone': hp.choice('freeze_backbone', [
+        # Doesn't seem to matter much, which is odd
         True,
         False,
     ]),
     'use_gelu' : hp.choice('use_gelu', [
+        # Doesn't seem to matter much, maybe slight gain
         True,
-        False,
+        # False,
     ]),
     'image_augs': hp.choice('image_augs', [
-        True,
+        # Hurts a little more than helps, but doesn't matter much
+        # True,
         False,
     ]),
     'optimizer': hp.choice('optimizer', [
@@ -118,20 +123,25 @@ search_space = {
         # 'sgd', # Garbo
     ]),
     'lr_scheduling_gamma': hp.choice('lr_scheduling_gamma', [
+        # Doesn't seem to matter much between 0.9 and None (1.0)
         # 0.1, # Garbo
-        0.9,
+        # 0.9,
         0.98,
-        None,
+        # None,
     ]),
     'slice_depth': 65,
     'num_workers': 0,
     'batch_size': hp.choice('batch_size', [32]),
-    'lr': hp.loguniform('lr',  np.log(0.00000001), np.log(0.001)),
+    'lr': hp.loguniform('lr',  np.log(0.0000001), np.log(0.001)),
     'num_epochs': hp.choice('num_epochs', [8, 16]),
     'patch_size_x': hp.choice('patch_size_x', [64]),
     'patch_size_y': hp.choice('patch_size_y', [64]),
     'resize_ratio': hp.choice('resize_ratio', [0.08]),
-    'max_samples_per_dataset': hp.choice('max_samples_per_dataset', [60000, 1000]),
+    'max_samples_per_dataset': hp.choice('max_samples_per_dataset', [
+        # Larger is better, strongest predictor of score
+        60000,
+        1000,
+    ]),
 }
 
 import argparse

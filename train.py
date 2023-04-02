@@ -232,13 +232,23 @@ def dice_score(preds, label, beta=0.5, epsilon=1e-6):
     # https://en.wikipedia.org/wiki/S%C3%B8rensen%E2%80%93Dice_coefficient
     preds = torch.sigmoid(preds)
     preds = preds.flatten()
+    print(f"Predictions tensor shape: {preds.shape}")
+    print(f"Predictions tensor dtype: {preds.dtype}")
+    print(f"Predictions tensor min: {preds.min()}")
+    print(f"Predictions tensor max: {preds.max()}")
     label = label.flatten()
+    print(f"Label tensor shape: {label.shape}")
+    print(f"Label tensor dtype: {label.dtype}")
+    print(f"Label tensor min: {label.min()}")
+    print(f"Label tensor max: {label.max()}")
     tp = preds[label==1].sum()
     fp = preds[label==0].sum()
     fn = label.sum() - tp
     p = tp / (tp + fp + epsilon)
     r = tp / (tp + fn + epsilon)
-    return (1 + beta * beta) * (p * r) / (beta * beta * p + r + epsilon)
+    _score = (1 + beta * beta) * (p * r) / (beta * beta * p + r + epsilon)
+    print(f"DICE score: {_score}")
+    return _score
 
 
 def get_gpu_memory():
@@ -516,8 +526,8 @@ def train_loop(
                 writer.add_scalar(
                     f'{loss_fn.__class__.__name__}/{current_dataset_id}/train', train_loss, step)
 
-            # Score is average dice score (batches)
-            score /= len(train_dataloader) // batch_size
+            # Score is average dice score for all batches
+            score /= len(train_dataloader)
             if score > best_score:
                 print("New best score: %.4f" % score)
                 best_score = score

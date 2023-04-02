@@ -79,6 +79,9 @@ def objective(hparams) -> float:
 
 # Define the search space
 search_space = {
+    # 'train_dir' : "C:\\Users\\ook\\Documents\\dev\\ashenvenus\\data\\train",
+    # 'eval_dir' : "C:\\Users\\ook\\Documents\\dev\\ashenvenus\\data\\test",
+    # 'output_dir' : "C:\\Users\\ook\\Documents\\dev\\ashenvenus\\output",
     'output_dir': 'output',
     'train_dir': 'data/train',
     'eval_dir': 'data/test',

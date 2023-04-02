@@ -1,29 +1,26 @@
-import os
-import time
-import subprocess
+import csv
 import gc
+import os
+import subprocess
+import time
 
 import numpy as np
 import PIL.Image as Image
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import torch.utils.data as data
-from torchvision import transforms
-from PIL import Image
-from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
 import torch.optim.lr_scheduler as lr_scheduler
-from tqdm import tqdm
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
+import torch.utils.data as data
+from PIL import Image
 from tensorboardX import SummaryWriter
-from torchvision.models import (
-    convnext_tiny, ConvNeXt_Tiny_Weights,
-    vit_b_32, ViT_B_32_Weights,
-    resnext50_32x4d, ResNeXt50_32X4D_Weights,
-    swin_t, Swin_T_Weights,
-)
+from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
+from torchvision import transforms
+from torchvision.models import (ConvNeXt_Tiny_Weights, ResNeXt50_32X4D_Weights,
+                                Swin_T_Weights, ViT_B_32_Weights,
+                                convnext_tiny, resnext50_32x4d, swin_t,
+                                vit_b_32)
+from tqdm import tqdm
+
 
 class PatchDataset(data.Dataset):
 
@@ -183,7 +180,7 @@ def get_device():
         return torch.device("cpu")
 
 
-def rle(img, threshold=0.5):
+def image_to_rle(img, threshold=0.5):
     # TODO: Histogram of image to see where threshold should be
     flat_img = img.flatten()
     flat_img = np.where(flat_img > threshold, 1, 0).astype(np.uint8)
@@ -193,6 +190,28 @@ def rle(img, threshold=0.5):
     ends_ix = np.where(ends)[0] + 2
     lengths = ends_ix - starts_ix
     return starts_ix, lengths
+
+
+def rle_to_image(rle_csv_path, image_shape, output_path):
+    with open(rle_csv_path, 'r') as csvfile:
+        csv_reader = csv.reader(csvfile)
+        for row in csv_reader:
+            img_name, rle_data = row
+            rle_pairs = list(map(int, rle_data.split()))
+
+            # Decode RLE data
+            img = np.zeros(image_shape[0] * image_shape[1], dtype=np.uint8)
+            for i in range(0, len(rle_pairs), 2):
+                start = rle_pairs[i] - 1
+                end = start + rle_pairs[i + 1]
+                img[start:end] = 1
+
+            # Reshape decoded image data to original shape
+            img = img.reshape(image_shape)
+
+            # Save the image
+            img = Image.fromarray(img * 255)
+            img.save(f"{output_path}/rle_pred_img_{img_name}.png")
 
 
 def get_gpu_memory():
@@ -547,6 +566,7 @@ def train_loop(
             _img.save(_pred_image_filepath)
 
         if save_submit_csv:
+            print("Saving submission csv...")
             # Resize pred_image to original size
             _img = Image.fromarray(pred_image)
             _img = _img.resize((
@@ -555,9 +575,12 @@ def train_loop(
             ))
             pred_image = np.array(_img)
 
-            starts_ix, lengths = rle(pred_image, threshold=threshold)
+            starts_ix, lengths = image_to_rle(pred_image, threshold=threshold)
             inklabels_rle = " ".join(map(str, sum(zip(starts_ix, lengths), ())))
             with open(submission_filepath, 'a') as f:
                 f.write(f"{subtest_name},{inklabels_rle}\n")
+
+            if save_pred_img:
+                rle_to_image(inklabels_rle, pred_image.shape, output_path=output_dir)
 
     return best_loss

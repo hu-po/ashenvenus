@@ -43,7 +43,7 @@ def objective(hparams) -> float:
     
     try:
         # Train and evaluate a TFLite model
-        loss: float = train_loop(
+        score: float = train_loop(
             # Directories and datasets
             output_dir=output_dir,
             train_dir=hparams['train_dir'],
@@ -73,8 +73,9 @@ def objective(hparams) -> float:
         )
     except Exception as e:
         print(f"\n\n Model Training FAILED with \n{e}\n\n")
-        loss = 10000.0
-    return loss
+        score = 0
+    # Maximize score is minimize negative score
+    return -score
 
 # Define the search space
 search_space = {

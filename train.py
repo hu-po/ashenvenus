@@ -227,6 +227,20 @@ def save_rle_as_image(rle_csv_path, output_dir, subtest_name, image_shape):
             img.save(_image_filepath)
 
 
+def dice_score(preds, label, beta=0.5, epsilon=1e-6):
+    # Implementation of DICE coefficient
+    # https://en.wikipedia.org/wiki/S%C3%B8rensen%E2%80%93Dice_coefficient
+    preds = torch.sigmoid(preds)
+    preds = preds.flatten()
+    label = label.flatten()
+    tp = preds[label==1].sum()
+    fp = preds[label==0].sum()
+    fn = label.sum() - tp
+    p = tp / (tp + fp + epsilon)
+    r = tp / (tp + fn + epsilon)
+    return (1 + beta * beta) * (p * r) / (beta * beta * p + r + epsilon)
+
+
 def get_gpu_memory():
     result = subprocess.run(['nvidia-smi', '--query-gpu=memory.used,memory.free',
                              '--format=csv,nounits,noheader'], stdout=subprocess.PIPE, text=True)
@@ -423,7 +437,7 @@ def train_loop(
         writer = SummaryWriter(output_dir)
 
     # Train the model
-    best_loss = 0
+    best_score = 0
     step = 0
     for epoch in range(num_epochs):
         print(f"Epoch: {epoch}")
@@ -475,6 +489,7 @@ def train_loop(
 
             print(f"Training...")
             train_loss = 0
+            score = 0
             for patch, label in tqdm(train_dataloader):
                 optimizer.zero_grad()
                 # writer.add_histogram('patch_input', patch, step)
@@ -488,21 +503,29 @@ def train_loop(
                 optimizer.step()
                 step += 1
                 train_loss += loss.item()
+                score += dice_score(pred, label)
 
                 # Check if we have exceeded the time limit
                 time_elapsed = time.time() - time_start
                 if time_elapsed > time_train_max_seconds:
                     print("Time limit exceeded, stopping batches")
                     break
-
-            train_loss /= max_samples_per_dataset
+            
             if write_logs:
+                train_loss /= max_samples_per_dataset
                 writer.add_scalar(
                     f'{loss_fn.__class__.__name__}/{current_dataset_id}/train', train_loss, step)
 
-            if save_model and train_loss < best_loss:
-                best_loss = train_loss
-                torch.save(model.state_dict(), f"{output_dir}/model.pth")
+            # Score is average dice score (batches)
+            score /= len(train_dataloader) // batch_size
+            if score > best_score:
+                print("New best score: %.4f" % score)
+                best_score = score
+                if save_model:
+                    print("Saving model...")
+                    torch.save(model.state_dict(), f"{output_dir}/model.pth")
+            if write_logs:
+                writer.add_scalar(f'Dice/{current_dataset_id}/train', score, step)
 
             # Check if we have exceeded the time limit
             time_elapsed = time.time() - time_start
@@ -626,4 +649,4 @@ def train_loop(
     if save_pred_img and save_submit_csv:
         save_rle_as_image(submission_filepath, output_dir, subtest_name, pred_image.shape)
 
-    return best_loss
+    return best_score

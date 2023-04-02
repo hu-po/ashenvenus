@@ -23,10 +23,11 @@ def objective(hparams) -> float:
         if key in [
             'model',
             'freeze_backbone',
+            'use_gelu',
             'curriculum',
             'optimizer',
             'lr_scheduling_gamma',
-            # 'image_augs',
+            'image_augs',
             # 'patch_size_x',
             # 'patch_size_y',
             'resize_ratio',
@@ -62,6 +63,7 @@ def objective(hparams) -> float:
             freeze_backbone=hparams['freeze_backbone'],
             optimizer=hparams['optimizer'],
             lr_scheduling_gamma=hparams['lr_scheduling_gamma'],
+            use_gelu=hparams['use_gelu'],
             slice_depth=hparams['slice_depth'],
             patch_size_x=hparams['patch_size_x'],
             patch_size_y=hparams['patch_size_y'],
@@ -89,22 +91,26 @@ if __name__ == '__main__':
         'train_dir': 'data/train',
         'eval_dir': 'data/test',
         'curriculum': hp.choice('curriculum', [
-            '1',
-            '2',
-            '3',
+            # '1',
+            # '2',
+            # '3',
             '123',
             '321',
             '13',
+            '32',
         ]),
         'model': hp.choice('model', [
-            # 'simplenet',
-            # 'simplenet_norm',
-            'convnext_tiny',
+            'simplenet',
+            'convnext_tiny', # Good
             # 'swin_t',
-            # 'resnext50_32x4d',
+            'resnext50_32x4d', # Potentially also good
             # 'vit_b_32',
         ]),
         'freeze_backbone': hp.choice('freeze_backbone', [
+            True,
+            False,
+        ]),
+        'use_gelu' : hp.choice('use_gelu', [
             True,
             False,
         ]),
@@ -114,22 +120,23 @@ if __name__ == '__main__':
         ]),
         'optimizer': hp.choice('optimizer', [
             'adam',
-            'sgd', # Trains slower and no good
+            # 'sgd', # Garbo
         ]),
         'lr_scheduling_gamma': hp.choice('lr_scheduling_gamma', [
-            0.1,
+            # 0.1, # Garbo
             0.9,
+            0.98,
             None,
         ]),
         'slice_depth': 65,
         'num_workers': 0,
         'batch_size': hp.choice('batch_size', [args.batch_size]),
-        'lr': hp.loguniform('lr',  np.log(0.000001), np.log(0.01)),
-        'num_epochs': hp.choice('num_epochs', [2, 8, 16]),
+        'lr': hp.loguniform('lr',  np.log(0.00000001), np.log(0.001)),
+        'num_epochs': hp.choice('num_epochs', [8, 16]),
         'patch_size_x': hp.choice('patch_size_x', [64]),
         'patch_size_y': hp.choice('patch_size_y', [64]),
         'resize_ratio': hp.choice('resize_ratio', [0.08]),
-        'max_samples_per_dataset': hp.choice('max_samples_per_dataset', [120000, 60000, 10000, 1000]),
+        'max_samples_per_dataset': hp.choice('max_samples_per_dataset', [60000, 1000]),
     }
     if args.seed == 420:
         print('TEST MODE')

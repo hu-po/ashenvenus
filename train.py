@@ -11,7 +11,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim.lr_scheduler as lr_scheduler
 import torch.utils.data as data
-from PIL import Image
+from PIL import Image, ImageFilter
 from tensorboardX import SummaryWriter
 from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
 from torchvision import transforms
@@ -125,6 +125,18 @@ class PatchDataset(data.Dataset):
         # print(f"Mask indices shape: {self.mask_indices.shape}")
         # print(f"Mask indices dtype: {self.mask_indices.dtype}")
 
+        # TODO: Use Predictions to additionally balance the dataset
+        # if self.train:
+        #     # Get indices where labels are 1
+        #     self.labels_indices = torch.nonzero(self.labels).to(torch.int32)
+        #     # print(f"Labels indices shape: {self.labels_indices.shape}")
+        #     # print(f"Labels indices dtype: {self.labels_indices.dtype}")
+            
+        #     # Indices where mask is 0 and labels is 1
+        #     self.mask_0_labels_1_indices = torch.nonzero(
+        #         (~_mask) & self.labels
+        #     ).to(torch.int32)
+
         # Pad the fragment with zeros based on patch size
         self.fragment = F.pad(
             self.fragment,
@@ -191,12 +203,12 @@ def image_to_rle(img, threshold=0.5):
     lengths = ends_ix - starts_ix
     return starts_ix, lengths
 
-
-def rle_to_image(rle_csv_path, image_shape, output_path):
+def save_rle_as_image(rle_csv_path, output_dir, image_shape):
     with open(rle_csv_path, 'r') as csvfile:
         csv_reader = csv.reader(csvfile)
+        next(csv_reader)  # Skip header
         for row in csv_reader:
-            img_name, rle_data = row
+            subtest_name, rle_data = row
             rle_pairs = list(map(int, rle_data.split()))
 
             # Decode RLE data
@@ -208,10 +220,9 @@ def rle_to_image(rle_csv_path, image_shape, output_path):
 
             # Reshape decoded image data to original shape
             img = img.reshape(image_shape)
-
-            # Save the image
-            img = Image.fromarray(img * 255)
-            img.save(f"{output_path}/rle_pred_img_{img_name}.png")
+            img = Image.fromarray(img * 255).convert('1')
+            _image_filepath = os.path.join(output_dir, f"pred_{subtest_name}_rle.png")
+            img.save(_image_filepath)
 
 
 def get_gpu_memory():
@@ -236,9 +247,14 @@ class PreTrainNet(nn.Module):
         pretrained_model: str = 'convnext_tiny',
         freeze_backbone: bool = False,
         pretrained_weights_filepath: str = None,
+        use_gelu: bool = False,
     ):
         super().__init__()
         self.conv = nn.Conv2d(slice_depth, 3, 3)
+        if use_gelu:
+            self.af = nn.GELU()
+        else:
+            self.af = nn.ReLU()
         # Load pretrained model
         if pretrained_model == 'convnext_tiny':
             if pretrained_weights_filepath is not None:
@@ -276,7 +292,7 @@ class PreTrainNet(nn.Module):
         self.fc = nn.LazyLinear(1)
 
     def forward(self, x):
-        x = self.conv(x)
+        x = self.af(self.conv(x))
         x = self.pre_trained_model(x)
         x = self.fc(x)
         return x
@@ -286,21 +302,29 @@ class SimpleNet(nn.Module):
     def __init__(
         self,
         slice_depth: int = 65,
+        use_gelu: bool = False,
     ):
         super().__init__()
-        self.conv1 = nn.Conv2d(slice_depth, 6, 5)
+        self.conv1 = nn.Conv2d(slice_depth, 16, 3)
+        self.conv2 = nn.Conv2d(16, 32, 5)
+        self.conv3 = nn.Conv2d(32, 64, 5)
         self.pool = nn.MaxPool2d(2, 2)
-        self.conv2 = nn.Conv2d(6, 16, 5)
-        self.fc1 = nn.LazyLinear(120)
-        self.fc2 = nn.LazyLinear(84)
+        if use_gelu:
+            self.af = nn.GELU()
+        else:
+            self.af = nn.ReLU()
+
+        self.fc1 = nn.LazyLinear(32)
+        self.fc2 = nn.LazyLinear(64)
         self.fc3 = nn.LazyLinear(1)
 
     def forward(self, x):
-        x = self.pool(F.relu(self.conv1(x)))
-        x = self.pool(F.relu(self.conv2(x)))
+        x = self.pool(self.af(self.conv1(x)))
+        x = self.pool(self.af(self.conv2(x)))
+        x = self.pool(self.af(self.conv3(x)))
         x = torch.flatten(x, 1)  # flatten all dimensions except batch
-        x = F.relu(self.fc1(x))
-        x = F.relu(self.fc2(x))
+        x = self.af(self.fc1(x))
+        x = self.af(self.fc2(x))
         x = self.fc3(x)
         return x
 
@@ -315,6 +339,7 @@ def train_loop(
     max_samples_per_dataset: int = 100,
     output_dir: str = "output/train",
     image_augs: bool = False,
+    use_gelu: bool = False,
     slice_depth: int = 3,
     patch_size_x: int = 512,
     patch_size_y: int = 128,
@@ -329,6 +354,7 @@ def train_loop(
     save_submit_csv: bool = False,
     save_model: bool = False,
     threshold: float = 0.5,
+    postprocess: bool = True,
     max_time_hours: float = 8,
 ):
     device = get_device()
@@ -343,6 +369,7 @@ def train_loop(
     if model == "simplenet":
         model = SimpleNet(
             slice_depth=slice_depth,
+            use_gelu=use_gelu,
         )
     elif model == 'convnext_tiny':
         model = PreTrainNet(
@@ -350,6 +377,7 @@ def train_loop(
             pretrained_model='convnext_tiny',
             freeze_backbone=freeze_backbone,
             pretrained_weights_filepath=pretrained_weights_filepath,
+            use_gelu=use_gelu,
         )
     elif model == 'vit_b_32':
         model = PreTrainNet(
@@ -357,6 +385,7 @@ def train_loop(
             pretrained_model='vit_b_32',
             freeze_backbone=freeze_backbone,
             pretrained_weights_filepath=pretrained_weights_filepath,
+            use_gelu=use_gelu,
         )
     elif model == 'swin_t':
         model = PreTrainNet(
@@ -364,6 +393,7 @@ def train_loop(
             pretrained_model='swin_t',
             freeze_backbone=freeze_backbone,
             pretrained_weights_filepath=pretrained_weights_filepath,
+            use_gelu=use_gelu,
         )
     elif model == 'resnext50_32x4d':
         model = PreTrainNet(
@@ -371,6 +401,7 @@ def train_loop(
             pretrained_model='resnext50_32x4d',
             freeze_backbone=freeze_backbone,
             pretrained_weights_filepath=pretrained_weights_filepath,
+            use_gelu=use_gelu,
         )
     model = model.to(device)
     loss_fn = nn.BCEWithLogitsLoss()
@@ -556,31 +587,40 @@ def train_loop(
 
         if write_logs:
             print("Writing prediction image to TensorBoard...")
-            writer.add_image(f'pred_image_{subtest_name}', pred_image, step)
+            writer.add_image(f'pred_{subtest_name}', pred_image, step)
+
+        # Resize pred_image to original size
+        img = Image.fromarray(pred_image * 255).convert('1')
+        img = img.resize((
+            eval_dataset.original_size[0],
+            eval_dataset.original_size[1],
+        ), resample=Image.BILINEAR)
 
         if save_pred_img:
             print("Saving prediction image...")
-            _img = Image.fromarray(pred_image * 255).convert('1')
-            _pred_image_filepath = os.path.join(
-                output_dir, f"pred_image_{subtest_name}.png")
-            _img.save(_pred_image_filepath)
+            _image_filepath = os.path.join(output_dir, f"pred_{subtest_name}.png")
+            img.save(_image_filepath)
+
+        if postprocess:
+            print("Postprocessing...")
+            # Erosion then Dilation 
+            _filter_size = max(3, int(0.001 * eval_dataset.original_size[0]))
+            img = img.filter(ImageFilter.MinFilter(_filter_size))
+            img = img.filter(ImageFilter.MaxFilter(_filter_size))
+
+        if save_pred_img:
+            print("Saving prediction image...")
+            _image_filepath = os.path.join(output_dir, f"pred_{subtest_name}_post.png")
+            img.save(_image_filepath)
 
         if save_submit_csv:
             print("Saving submission csv...")
-            # Resize pred_image to original size
-            _img = Image.fromarray(pred_image)
-            _img = _img.resize((
-                eval_dataset.original_size[0],
-                eval_dataset.original_size[1],
-            ))
-            pred_image = np.array(_img)
-
-            starts_ix, lengths = image_to_rle(pred_image, threshold=threshold)
+            starts_ix, lengths = image_to_rle(np.array(img), threshold=threshold)
             inklabels_rle = " ".join(map(str, sum(zip(starts_ix, lengths), ())))
             with open(submission_filepath, 'a') as f:
                 f.write(f"{subtest_name},{inklabels_rle}\n")
 
-            if save_pred_img:
-                rle_to_image(inklabels_rle, pred_image.shape, output_path=output_dir)
+    if save_pred_img and save_submit_csv:
+        save_rle_as_image(submission_filepath, output_dir, pred_image.shape)
 
     return best_loss

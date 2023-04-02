@@ -587,7 +587,8 @@ def train_loop(
 
         if write_logs:
             print("Writing prediction image to TensorBoard...")
-            writer.add_image(f'pred_{subtest_name}', pred_image, step)
+            # Add batch dimmension to pred_image for Tensorboard
+            writer.add_image(f'pred_{subtest_name}', np.expand_dims(pred_image, axis=0), step)
 
         # Resize pred_image to original size
         img = Image.fromarray(pred_image * 255).convert('1')
@@ -604,7 +605,7 @@ def train_loop(
         if postprocess:
             print("Postprocessing...")
             # Erosion then Dilation 
-            _filter_size = max(3, int(0.001 * eval_dataset.original_size[0]))
+            _filter_size = 16
             img = img.filter(ImageFilter.MinFilter(_filter_size))
             img = img.filter(ImageFilter.MaxFilter(_filter_size))
 

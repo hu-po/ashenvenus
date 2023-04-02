@@ -203,12 +203,14 @@ def image_to_rle(img, threshold=0.5):
     lengths = ends_ix - starts_ix
     return starts_ix, lengths
 
-def save_rle_as_image(rle_csv_path, output_dir, image_shape):
+def save_rle_as_image(rle_csv_path, output_dir, subtest_name, image_shape):
     with open(rle_csv_path, 'r') as csvfile:
         csv_reader = csv.reader(csvfile)
         next(csv_reader)  # Skip header
         for row in csv_reader:
-            subtest_name, rle_data = row
+            _subtest_name, rle_data = row
+            if _subtest_name != subtest_name:
+                continue
             rle_pairs = list(map(int, rle_data.split()))
 
             # Decode RLE data
@@ -622,6 +624,6 @@ def train_loop(
                 f.write(f"{subtest_name},{inklabels_rle}\n")
 
     if save_pred_img and save_submit_csv:
-        save_rle_as_image(submission_filepath, output_dir, pred_image.shape)
+        save_rle_as_image(submission_filepath, output_dir, subtest_name, pred_image.shape)
 
     return best_loss

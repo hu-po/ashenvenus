@@ -479,8 +479,7 @@ def train_loop(
     model.eval()
 
     if save_submit_csv:
-        # Create submission file
-        submission_filepath = 'submission.csv'
+        submission_filepath = os.path.join(output_dir, 'submission.csv')
         with open(submission_filepath, 'w') as f:
             # Write header
             f.write("Id,Predicted\n")
@@ -543,7 +542,9 @@ def train_loop(
         if save_pred_img:
             print("Saving prediction image...")
             _img = Image.fromarray(pred_image * 255).convert('1')
-            _img.save(f"{output_dir}/pred_image_{subtest_name}.png")
+            _pred_image_filepath = os.path.join(
+                output_dir, f"pred_image_{subtest_name}.png")
+            _img.save(_pred_image_filepath)
 
         if save_submit_csv:
             # Resize pred_image to original size

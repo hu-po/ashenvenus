@@ -605,7 +605,7 @@ def train_loop(
         if postprocess:
             print("Postprocessing...")
             # Erosion then Dilation 
-            _filter_size = 16
+            _filter_size = 3
             img = img.filter(ImageFilter.MinFilter(_filter_size))
             img = img.filter(ImageFilter.MaxFilter(_filter_size))
 

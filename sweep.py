@@ -1,25 +1,17 @@
-import os
-import pprint
-import uuid
-
 import numpy as np
-import yaml
 from hyperopt import fmin, hp, tpe
+from src import sweep_episode
+import argparse
 
-from train import train_loop
-
-
-
+parser = argparse.ArgumentParser()
+parser.add_argument('--batch_size', type=int, default=32)
+parser.add_argument('--seed', type=int, default=0)
 
 # Define the search space
 search_space = {
-    # 'train_dir' : "C:\\Users\\ook\\Documents\\dev\\ashenvenus\\data\\train",
-    # 'eval_dir' : "C:\\Users\\ook\\Documents\\dev\\ashenvenus\\data\\test",
-    # 'output_dir' : "C:\\Users\\ook\\Documents\\dev\\ashenvenus\\output",
     'output_dir': 'output',
     'train_dir': 'data/train',
     'eval_dir': 'data/test',
-    'hparams_filename': 'hparams.yaml',
     'curriculum': hp.choice('curriculum', [
         # All 3 performs better, order doesn't seem to matter
         # '1',
@@ -31,14 +23,15 @@ search_space = {
         '321',
     ]),
     'model': hp.choice('model', [
-        # Doesn't seem to matter much, all models perform similarly, even simplenet
-        'simplenet',
-        'convnext_tiny', # Good
-        # 'swin_t',
-        'resnext50_32x4d', # Potentially also good
-        # 'vit_b_32',
+        'convnext_tiny',
+        'convnext_small',
+        'convnext_base',
+        'convnext_large',
+        'resnext50_32x4d',
+        'resnext101_32x8d',
+        'resnext101_64x4d',
     ]),
-    'freeze_backbone': hp.choice('freeze_backbone', [
+    'freeze': hp.choice('freeze', [
         # Doesn't seem to matter much, which is odd
         True,
         False,
@@ -57,7 +50,7 @@ search_space = {
         'adam',
         # 'sgd', # Garbo
     ]),
-    'lr_scheduling_gamma': hp.choice('lr_scheduling_gamma', [
+    'lr_gamma': hp.choice('lr_gamma', [
         # Doesn't seem to matter much between 0.9 and None (1.0)
         # 0.1, # Garbo
         # 0.9,
@@ -72,32 +65,31 @@ search_space = {
     'patch_size_x': hp.choice('patch_size_x', [64]),
     'patch_size_y': hp.choice('patch_size_y', [64]),
     'resize_ratio': hp.choice('resize_ratio', [0.08]),
-    'max_samples_per_dataset': hp.choice('max_samples_per_dataset', [
+    'num_samples': hp.choice('num_samples', [
         # Larger is better, strongest predictor of score
         60000,
         1000,
     ]),
+    'max_time_hours': hp.choice('max_time_hours', [2, 8]),
 }
 
-import argparse
+if __name__ == '__main__':
 
-parser = argparse.ArgumentParser()
-parser.add_argument('--batch_size', type=int, default=32)
-parser.add_argument('--seed', type=int, default=0)
-args = parser.parse_args()
-if args.seed == 420:
-    print('TEST MODE')
-    search_space['max_samples_per_dataset'] = 64
-    search_space['num_epochs'] = 2
-    search_space['slice_depth'] = 2
-    search_space['resize_ratio'] = 0.05
-search_space['batch_size'] = args.batch_size
+    args = parser.parse_args()
+    if args.seed == 420:
+        print('TEST MODE')
+        search_space['num_samples'] = 64
+        search_space['num_epochs'] = 2
+        search_space['slice_depth'] = 2
+        search_space['resize_ratio'] = 0.05
 
-# Run the optimization
-best = fmin(
-    objective,
-    space=search_space,
-    algo=tpe.suggest,
-    max_evals=100,
-    rstate=np.random.default_rng(args.seed),
-)
+    search_space['batch_size'] = args.batch_size
+    print('Using batch size:', search_space['batch_size'])
+    # Run the optimization
+    best = fmin(
+        sweep_episode,
+        space=search_space,
+        algo=tpe.suggest,
+        max_evals=100,
+        rstate=np.random.Generator(np.random.PCG64(args.seed)),
+    )

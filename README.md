@@ -18,6 +18,8 @@ To run a hyperparameter sweep use:
 python sweep.py --seed 0
 ```
 
+To run a saved model use the evaluation notbeook `eval.ipynb`.
+
 ## YouTube
 
 This repo was built live on YouTube, you can find the playlist here:

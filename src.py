@@ -3,6 +3,7 @@ import gc
 import os
 import subprocess
 import time
+from typing import Union
 
 import numpy as np
 import PIL.Image as Image
@@ -15,11 +16,7 @@ import yaml
 from PIL import Image, ImageFilter
 from tensorboardX import SummaryWriter
 from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
-from torchvision import transforms
-from torchvision.models import (ConvNeXt_Tiny_Weights, ResNeXt50_32X4D_Weights,
-                                Swin_T_Weights, ViT_B_32_Weights,
-                                convnext_tiny, resnext50_32x4d, swin_t,
-                                vit_b_32)
+from torchvision import transforms, models
 from tqdm import tqdm
 import os
 import pprint
@@ -27,9 +24,6 @@ import uuid
 
 import numpy as np
 import yaml
-from hyperopt import fmin, hp, tpe
-
-from train import train_loop
 
 
 class PatchDataset(data.Dataset):
@@ -276,134 +270,61 @@ def clear_gpu_memory():
         torch.cuda.empty_cache()
         gc.collect()
 
-class PreTrainNet(nn.Module):
+class Vesuvius(nn.Module):
+
+    models = {
+        'convnext_tiny': (models.convnext_tiny, models.ConvNeXt_Tiny_Weights.DEFAULT),
+        'convnext_small': (models.convnext_small, models.ConvNeXt_Small_Weights.DEFAULT),
+        'convnext_base': (models.convnext_base, models.ConvNeXt_Base_Weights.DEFAULT),
+        'convnext_large': (models.convnext_large, models.ConvNeXt_Large_Weights.DEFAULT),
+        'resnext50_32x4d': (models.resnext50_32x4d, models.ResNeXt50_32X4D_Weights.DEFAULT),
+        'resnext101_32x8d': (models.resnext101_32x8d, models.ResNeXt101_32X8D_Weights.DEFAULT),
+        'resnext101_64x4d': (models.resnext101_64x4d, models.ResNeXt101_64X4D_Weights.DEFAULT),
+    }
+
     def __init__(
         self,
         slice_depth: int = 65,
-        pretrained_model: str = 'convnext_tiny',
-        freeze_backbone: bool = False,
-        pretrained_weights_filepath: str = None,
+        kernel_size: int = 3,
         use_gelu: bool = False,
+        model: str = 'convnext_tiny',
+        load_fresh: bool = False,
+        freeze: bool = False,
     ):
         super().__init__()
-        self.conv = nn.Conv2d(slice_depth, 3, 3)
+        print(f"Initializing new model: {model}")
         if use_gelu:
             self.af = nn.GELU()
         else:
             self.af = nn.ReLU()
-        # Load pretrained model
-        if pretrained_model == 'convnext_tiny':
-            if pretrained_weights_filepath is not None:
-                self.pre_trained_model = convnext_tiny()
-            else:
-                _weights = ConvNeXt_Tiny_Weights.DEFAULT
-                self.pre_trained_model = convnext_tiny(weights=_weights)
-        elif pretrained_model == 'vit_b_32':
-            if pretrained_weights_filepath is not None:
-                self.pre_trained_model = vit_b_32()
-            else:
-                _weights = ViT_B_32_Weights.DEFAULT
-                self.pre_trained_model = vit_b_32(weights=_weights)
-        elif pretrained_model == 'swin_t':
-            if pretrained_weights_filepath is not None:
-                self.pre_trained_model = swin_t()
-            else:
-                _weights = Swin_T_Weights.DEFAULT
-                self.pre_trained_model = swin_t(weights=_weights)
-        elif pretrained_model == 'resnext50_32x4d':
-            if pretrained_weights_filepath is not None:
-                self.pre_trained_model = resnext50_32x4d()
-            else:
-                _weights = ResNeXt50_32X4D_Weights.DEFAULT
-                self.pre_trained_model = resnext50_32x4d(weights=_weights)
-        if pretrained_weights_filepath is not None:
-            _state_dict = torch.load(pretrained_weights_filepath)
-            self.pre_trained_model.load_state_dict(_state_dict)
+        self.conv = nn.Conv2d(slice_depth, 3, kernel_size)
+        assert model in self.models, f"Model {model} not supported"
+        _f, weights = self.models[model]
+        # Optionally load fresh pre-trained model from scratch
+        self.model = _f(weights=weights if load_fresh else None)
         # Put model in training mode
-        if freeze_backbone:
-            self.pre_trained_model.eval()
+        if freeze:
+            self.model.eval()
         else:
-            self.pre_trained_model.train()
+            self.model.train()
         # Binary classification head on top
         self.fc = nn.LazyLinear(1)
 
     def forward(self, x):
         x = self.af(self.conv(x))
-        x = self.pre_trained_model(x)
+        x = self.af(self.model(x))
         x = self.fc(x)
         return x
 
 
-class SimpleNet(nn.Module):
-    def __init__(
-        self,
-        slice_depth: int = 65,
-        use_gelu: bool = False,
-    ):
-        super().__init__()
-        self.conv1 = nn.Conv2d(slice_depth, 16, 3)
-        self.conv2 = nn.Conv2d(16, 32, 5)
-        self.conv3 = nn.Conv2d(32, 64, 5)
-        self.pool = nn.MaxPool2d(2, 2)
-        if use_gelu:
-            self.af = nn.GELU()
-        else:
-            self.af = nn.ReLU()
-
-        self.fc1 = nn.LazyLinear(32)
-        self.fc2 = nn.LazyLinear(64)
-        self.fc3 = nn.LazyLinear(1)
-
-    def forward(self, x):
-        x = self.pool(self.af(self.conv1(x)))
-        x = self.pool(self.af(self.conv2(x)))
-        x = self.pool(self.af(self.conv3(x)))
-        x = torch.flatten(x, 1)  # flatten all dimensions except batch
-        x = self.af(self.fc1(x))
-        x = self.af(self.fc2(x))
-        x = self.fc3(x)
-        return x
-    
-
-def load_model(
-    model='simplenet',
-    slice_depth=65,
-    use_gelu=True,
-    freeze_backbone=True,
-    pretrained_weights_filepath=None,
-):
-    if model == "simplenet":
-        model = SimpleNet(
-            slice_depth=slice_depth,
-            use_gelu=use_gelu,
-        )
-    elif model in [
-        'convnext_tiny',
-        'vit_b_32',
-        'swin_t',
-        'resnext50_32x4d',
-    ]:
-        model = PreTrainNet(
-            pretrained_model=model,
-            slice_depth=slice_depth,
-            freeze_backbone=freeze_backbone,
-            pretrained_weights_filepath=pretrained_weights_filepath,
-            use_gelu=use_gelu,
-        )
-    else:
-        raise ValueError(f"Model {model} not supported")
-    return model
-
-
 def train_loop(
     train_dir: str = "data/train/",
-    eval_dir: str = "data/eval/",
     model: str = "simplenet",
-    freeze_backbone: bool = False,
-    pretrained_weights_filepath: str = None,
+    freeze: bool = False,
+    weights_filepath: str = None,
     optimizer: str = "adam",
     curriculum: str = "1",
-    max_samples_per_dataset: int = 100,
+    num_samples: int = 100,
     output_dir: str = "output/train",
     image_augs: bool = False,
     use_gelu: bool = False,
@@ -413,15 +334,11 @@ def train_loop(
     resize_ratio: float = 1.0,
     batch_size: int = 16,
     lr: float = 0.001,
-    lr_scheduling_gamma: float = None,
+    lr_gamma: float = None,
     num_epochs: int = 2,
     num_workers: int = 1,
-    write_logs: bool = False,
-    save_pred_img: bool = False,
-    save_submit_csv: bool = False,
+    writer: bool = False,
     save_model: bool = False,
-    threshold: float = 0.5,
-    postprocess: bool = True,
     max_time_hours: float = 8,
 ):
     # Notebook will only run for this amount of time
@@ -435,28 +352,32 @@ def train_loop(
     clear_gpu_memory()
 
     # Load the model, try to fit on GPU
-    model = load_model(
-        model=model,
-        slice_depth=slice_depth,
-        use_gelu=use_gelu,
-        freeze_backbone=freeze_backbone,
-        pretrained_weights_filepath=pretrained_weights_filepath,
-    )
+    if isinstance(model, str):
+        model = Vesuvius(
+            model = model,
+            slice_depth=slice_depth,
+            use_gelu=use_gelu,
+            freeze=freeze,
+        )    
+        if weights_filepath is not None:
+            print(f"Loading weights from {weights_filepath}")
+            model.load_state_dict(torch.load(weights_filepath))
     model = model.to(device)
-    loss_fn = nn.BCEWithLogitsLoss()
+    model.train()
 
     # Create optimizers
     if optimizer == "adam":
         optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     elif optimizer == "sgd":
         optimizer = torch.optim.SGD(model.parameters(), lr=lr)
+    loss_fn = nn.BCEWithLogitsLoss()
 
-    if lr_scheduling_gamma is not None:
+    if lr_gamma is not None:
         scheduler = lr_scheduler.ExponentialLR(
-            optimizer, gamma=lr_scheduling_gamma)
+            optimizer, gamma=lr_gamma)
 
     # Writer for Tensorboard
-    if write_logs:
+    if writer:
         writer = SummaryWriter(output_dir)
 
     # Train the model
@@ -504,7 +425,7 @@ def train_loop(
                 train_dataset,
                 batch_size=batch_size,
                 sampler=RandomSampler(
-                    train_dataset, num_samples=max_samples_per_dataset),
+                    train_dataset, num_samples=num_samples),
                 num_workers=num_workers,
                 # This will make it go faster if it is loaded into a GPU
                 pin_memory=True,
@@ -535,8 +456,8 @@ def train_loop(
                     print("Time limit exceeded, stopping batches")
                     break
             
-            if write_logs:
-                train_loss /= max_samples_per_dataset
+            if writer:
+                train_loss /= num_samples
                 writer.add_scalar(
                     f'{loss_fn.__class__.__name__}/{current_dataset_id}/train', train_loss, step)
 
@@ -548,7 +469,7 @@ def train_loop(
                 if save_model:
                     print("Saving model...")
                     torch.save(model.state_dict(), f"{output_dir}/model.pth")
-            if write_logs:
+            if writer:
                 writer.add_scalar(f'Dice/{current_dataset_id}/train', score, step)
 
             # Check if we have exceeded the time limit
@@ -557,7 +478,7 @@ def train_loop(
                 print("Time limit exceeded, stopping curriculum")
                 break
 
-        if lr_scheduling_gamma is not None:
+        if lr_gamma is not None:
             before_lr = optimizer.param_groups[0]["lr"]
             scheduler.step()
             after_lr = optimizer.param_groups[0]["lr"]
@@ -570,11 +491,46 @@ def train_loop(
             print("Time limit exceeded, stopping training")
             break
 
-    if write_logs:
+    if writer:
         writer.close()  # Close the SummaryWriter
 
-    del train_dataloader, train_dataset
+    return best_score, model, writer
+
+def eval(
+    eval_dir: str = "data/eval/",
+    weights_filepath: str = None,
+    model: Union[str, nn.Module] = "convnext_tiny",
+    output_dir: str = "output/train",
+    slice_depth: int = 3,
+    patch_size_x: int = 512,
+    patch_size_y: int = 128,
+    resize_ratio: float = 1.0,
+    use_gelu: bool = False,
+    freeze: bool = False,
+    batch_size: int = 16,
+    num_workers: int = 1,
+    save_pred_img: bool = False,
+    save_submit_csv: bool = False,
+    threshold: float = 0.5,
+    postprocess: bool = True,
+    writer: SummaryWriter = None,
+):
+    # Get GPU 
+    device = get_device()
     clear_gpu_memory()
+
+    # Load the model, try to fit on GPU
+    if isinstance(model, str):
+        model = Vesuvius(
+            model = model,
+            slice_depth=slice_depth,
+            use_gelu=use_gelu,
+            freeze=freeze,
+        )    
+        if weights_filepath is not None:
+            print(f"Loading weights from {weights_filepath}")
+            model.load_state_dict(torch.load(weights_filepath))
+    model = model.to(device)
     model.eval()
 
     if save_submit_csv:
@@ -634,7 +590,7 @@ def train_loop(
                 pixel_index = eval_dataset.mask_indices[i * batch_size + j]
                 pred_image[pixel_index[0], pixel_index[1]] = pred
 
-        if write_logs:
+        if writer is not None:
             print("Writing prediction image to TensorBoard...")
             # Add batch dimmension to pred_image for Tensorboard
             writer.add_image(f'pred_{subtest_name}', np.expand_dims(pred_image, axis=0), step)
@@ -673,34 +629,26 @@ def train_loop(
     if save_pred_img and save_submit_csv:
         save_rle_as_image(submission_filepath, output_dir, subtest_name, pred_image.shape)
 
-    return best_score
 
-def eval(
-    model_output_path: str,
+def eval_from_episode_dir(
+    episode_dir: str = None,
     hparams_filename: str = 'hparams.yaml',
-    pretrained_weights_filepath: str = 'model.pth',
+    weights_filename: str = 'model.pth',
 ):
     # Get hyperparams from text file
-    _hparams_filepath = os.path.join(model_output_path, hparams_filename)
+    _hparams_filepath = os.path.join(episode_dir, hparams_filename)
     with open(_hparams_filepath, 'r') as f:
         hparams = yaml.load(f, Loader=yaml.FullLoader)
 
-    # Get GPU 
-    device = get_device()
-    clear_gpu_memory()
-
-    # Load the model, try to fit on GPU
-    model = load_model(
-        model=model,
-        slice_depth=hparams['slice_depth'],
-        use_gelu=hparams['use_gelu'],
-        freeze_backbone=hparams['freeze_backbone'],
-        pretrained_weights_filepath=hparams['pretrained_weights_filepath'],
+    _weights_filepath = os.path.join(episode_dir, weights_filename)
+    eval(
+        **hparams,
+        weights_filepath = _weights_filepath,
     )
-    model = model.to(device)
 
 
-def objective(hparams) -> float:
+
+def sweep_episode(hparams) -> float:
 
     # Print hyperparam dict with logging
     print(f"\n\nHyperparams:\n\n{pprint.pformat(hparams)}\n\n")
@@ -711,11 +659,11 @@ def objective(hparams) -> float:
         # Choose name of run based on hparams
         if key in [
             'model',
-            'freeze_backbone',
+            'freeze',
             'use_gelu',
             'curriculum',
             'optimizer',
-            'lr_scheduling_gamma',
+            'lr_gamma',
             'image_augs',
             # 'patch_size_x',
             # 'patch_size_y',
@@ -723,7 +671,7 @@ def objective(hparams) -> float:
             # 'num_epochs',
             # 'batch_size',
             'lr',
-            'max_samples_per_dataset',
+            'num_samples',
         ]:
             run_name += f'{key}_{str(value)}_'
 
@@ -736,34 +684,16 @@ def objective(hparams) -> float:
         yaml.dump(hparams, f)
     
     try:
+        writer = SummaryWriter(log_dir=output_dir)
         # Train and evaluate a TFLite model
-        score: float = train_loop(
-            # Directories and datasets
-            output_dir=output_dir,
-            train_dir=hparams['train_dir'],
-            eval_dir=hparams['eval_dir'],
-            curriculum=hparams['curriculum'],
-            image_augs=hparams['image_augs'],
-            resize_ratio=hparams['resize_ratio'],
-            num_workers=hparams['num_workers'],
-            max_samples_per_dataset=hparams['max_samples_per_dataset'],
-            # Model and training
-            model=hparams['model'],
-            freeze_backbone=hparams['freeze_backbone'],
-            optimizer=hparams['optimizer'],
-            lr_scheduling_gamma=hparams['lr_scheduling_gamma'],
-            use_gelu=hparams['use_gelu'],
-            slice_depth=hparams['slice_depth'],
-            patch_size_x=hparams['patch_size_x'],
-            patch_size_y=hparams['patch_size_y'],
-            batch_size=hparams['batch_size'],
-            lr=hparams['lr'],
-            num_epochs=hparams['num_epochs'],
-            save_pred_img=True,
-            save_submit_csv=False,
-            write_logs = True,
-            save_model=True,
-            max_time_hours = 8,
+        score, model = train_loop(
+            **hparams,
+            writer = writer,
+        )
+        eval(
+            **hparams,
+            model=model,
+            writer=writer,
         )
     except Exception as e:
         print(f"\n\n Model Training FAILED with \n{e}\n\n")

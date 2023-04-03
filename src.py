@@ -448,8 +448,9 @@ def train(
                 loss.backward()
                 optimizer.step()
                 step += 1
-                train_loss += loss.item()
-                score += dice_score(pred, label)
+                with torch.no_grad():
+                    train_loss += loss.item()
+                    score += dice_score(pred, label).item()
 
                 # Check if we have exceeded the time limit
                 time_elapsed = time.time() - time_start
@@ -655,44 +656,27 @@ def eval_from_episode_dir(
 
 
 def sweep_episode(hparams) -> float:
-
+    
     # Print hyperparam dict with logging
     print(f"\n\nHyperparams:\n\n{pprint.pformat(hparams)}\n\n")
 
-    # Add UUID to run name for ultimate uniqueness
-    run_name: str = str(uuid.uuid4())[:8] + '_'
-    for key, value in hparams.items():
-        if key not in [
-            'eval_dir',
-            'num_workers',
-            'output_dir',
-            'train_dir',
-        ]:
-            run_name += f'{key}_{str(value)}_'
-    # Make sure run_name is not too long
-    run_name = run_name[:255]
-
-    # Clean output dir
-    output_dir = hparams['output_dir']
-    shutil.rmtree(output_dir, ignore_errors=True)
-    os.makedirs(output_dir, exist_ok=True)
-
     # Create directory based on run_name
-    episode_dir = os.path.join(output_dir, run_name)
-    os.makedirs(episode_dir, exist_ok=True)
+    run_name: str = str(uuid.uuid4())[:8]
+    hparams['output_dir'] = os.path.join(hparams['output_dir'], run_name)
+    os.makedirs(hparams['output_dir'], exist_ok=True)
 
     # Save hyperparams to file with YAML
-    with open(os.path.join(episode_dir, 'hparams.yaml'), 'w') as f:
+    with open(os.path.join(hparams['output_dir'], 'hparams.yaml'), 'w') as f:
         yaml.dump(hparams, f)
     
     try:
-        hparams['output_dir'] = episode_dir
-        writer = SummaryWriter(log_dir=episode_dir)
+        writer = SummaryWriter(log_dir=hparams['output_dir'])
         # Train and evaluate a TFLite model
         score, model = train(
             **hparams,
             writer = writer,
         )
+        writer.add_hparams(hparams, {'dice_score': score})
         del hparams['model']
         eval(
             **hparams,

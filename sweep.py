@@ -1,7 +1,10 @@
+import argparse
+import shutil
+
 import numpy as np
 from hyperopt import fmin, hp, tpe
+
 from src import sweep_episode
-import argparse
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--batch_size', type=int, default=32)
@@ -85,6 +88,10 @@ if __name__ == '__main__':
         search_space['slice_depth'] = 2
         search_space['resize_ratio'] = 0.05
     search_space['batch_size'] = args.batch_size
+
+    # Clean output dir    
+    shutil.rmtree(search_space['output_dir'], ignore_errors=True)
+
     best = fmin(
         sweep_episode,
         space=search_space,

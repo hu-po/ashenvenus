@@ -1,81 +1,15 @@
-import uuid
 import os
-
 import pprint
+import uuid
+
 import numpy as np
+import yaml
 from hyperopt import fmin, hp, tpe
+
 from train import train_loop
 
-def objective(hparams) -> float:
 
-    # Print hyperparam dict with logging
-    print(f"\n\nHyperparams:\n\n{pprint.pformat(hparams)}\n\n")
 
-    # Add UUID to run name for ultimate uniqueness
-    run_name: str = str(uuid.uuid4())[:8] + '_'
-    for key, value in hparams.items():
-        # Choose name of run based on hparams
-        if key in [
-            'model',
-            'freeze_backbone',
-            'use_gelu',
-            'curriculum',
-            'optimizer',
-            'lr_scheduling_gamma',
-            'image_augs',
-            # 'patch_size_x',
-            # 'patch_size_y',
-            'resize_ratio',
-            # 'num_epochs',
-            # 'batch_size',
-            'lr',
-            'max_samples_per_dataset',
-        ]:
-            run_name += f'{key}_{str(value)}_'
-
-    # Create directory based on run_name
-    output_dir = os.path.join(hparams['output_dir'], run_name)
-    os.makedirs(output_dir, exist_ok=True)
-
-    # Save hyperparams to file
-    with open(os.path.join(output_dir, 'hparams.txt'), 'w') as f:
-        f.write(pprint.pformat(hparams))
-    
-    try:
-        # Train and evaluate a TFLite model
-        score: float = train_loop(
-            # Directories and datasets
-            output_dir=output_dir,
-            train_dir=hparams['train_dir'],
-            eval_dir=hparams['eval_dir'],
-            curriculum=hparams['curriculum'],
-            image_augs=hparams['image_augs'],
-            resize_ratio=hparams['resize_ratio'],
-            num_workers=hparams['num_workers'],
-            max_samples_per_dataset=hparams['max_samples_per_dataset'],
-            # Model and training
-            model=hparams['model'],
-            freeze_backbone=hparams['freeze_backbone'],
-            optimizer=hparams['optimizer'],
-            lr_scheduling_gamma=hparams['lr_scheduling_gamma'],
-            use_gelu=hparams['use_gelu'],
-            slice_depth=hparams['slice_depth'],
-            patch_size_x=hparams['patch_size_x'],
-            patch_size_y=hparams['patch_size_y'],
-            batch_size=hparams['batch_size'],
-            lr=hparams['lr'],
-            num_epochs=hparams['num_epochs'],
-            save_pred_img=True,
-            save_submit_csv=False,
-            write_logs = True,
-            save_model=True,
-            max_time_hours = 8,
-        )
-    except Exception as e:
-        print(f"\n\n Model Training FAILED with \n{e}\n\n")
-        score = 0
-    # Maximize score is minimize negative score
-    return -score
 
 # Define the search space
 search_space = {
@@ -85,6 +19,7 @@ search_space = {
     'output_dir': 'output',
     'train_dir': 'data/train',
     'eval_dir': 'data/test',
+    'hparams_filename': 'hparams.yaml',
     'curriculum': hp.choice('curriculum', [
         # All 3 performs better, order doesn't seem to matter
         # '1',
@@ -145,6 +80,7 @@ search_space = {
 }
 
 import argparse
+
 parser = argparse.ArgumentParser()
 parser.add_argument('--batch_size', type=int, default=32)
 parser.add_argument('--seed', type=int, default=0)

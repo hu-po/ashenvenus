@@ -11,6 +11,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim.lr_scheduler as lr_scheduler
 import torch.utils.data as data
+import yaml
 from PIL import Image, ImageFilter
 from tensorboardX import SummaryWriter
 from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
@@ -20,6 +21,15 @@ from torchvision.models import (ConvNeXt_Tiny_Weights, ResNeXt50_32X4D_Weights,
                                 convnext_tiny, resnext50_32x4d, swin_t,
                                 vit_b_32)
 from tqdm import tqdm
+import os
+import pprint
+import uuid
+
+import numpy as np
+import yaml
+from hyperopt import fmin, hp, tpe
+
+from train import train_loop
 
 
 class PatchDataset(data.Dataset):
@@ -353,6 +363,37 @@ class SimpleNet(nn.Module):
         x = self.af(self.fc2(x))
         x = self.fc3(x)
         return x
+    
+
+def load_model(
+    model='simplenet',
+    slice_depth=65,
+    use_gelu=True,
+    freeze_backbone=True,
+    pretrained_weights_filepath=None,
+):
+    if model == "simplenet":
+        model = SimpleNet(
+            slice_depth=slice_depth,
+            use_gelu=use_gelu,
+        )
+    elif model in [
+        'convnext_tiny',
+        'vit_b_32',
+        'swin_t',
+        'resnext50_32x4d',
+    ]:
+        model = PreTrainNet(
+            pretrained_model=model,
+            slice_depth=slice_depth,
+            freeze_backbone=freeze_backbone,
+            pretrained_weights_filepath=pretrained_weights_filepath,
+            use_gelu=use_gelu,
+        )
+    else:
+        raise ValueError(f"Model {model} not supported")
+    return model
+
 
 def train_loop(
     train_dir: str = "data/train/",
@@ -383,52 +424,24 @@ def train_loop(
     postprocess: bool = True,
     max_time_hours: float = 8,
 ):
-    device = get_device()
-    clear_gpu_memory()
-
     # Notebook will only run for this amount of time
+    print(f"Training will run for {max_time_hours} hours")
     time_train_max_seconds = max_time_hours * 60 * 60
     time_start = time.time()
     time_elapsed = 0
 
+    # Get GPU 
+    device = get_device()
+    clear_gpu_memory()
+
     # Load the model, try to fit on GPU
-    if model == "simplenet":
-        model = SimpleNet(
-            slice_depth=slice_depth,
-            use_gelu=use_gelu,
-        )
-    elif model == 'convnext_tiny':
-        model = PreTrainNet(
-            slice_depth=slice_depth,
-            pretrained_model='convnext_tiny',
-            freeze_backbone=freeze_backbone,
-            pretrained_weights_filepath=pretrained_weights_filepath,
-            use_gelu=use_gelu,
-        )
-    elif model == 'vit_b_32':
-        model = PreTrainNet(
-            slice_depth=slice_depth,
-            pretrained_model='vit_b_32',
-            freeze_backbone=freeze_backbone,
-            pretrained_weights_filepath=pretrained_weights_filepath,
-            use_gelu=use_gelu,
-        )
-    elif model == 'swin_t':
-        model = PreTrainNet(
-            slice_depth=slice_depth,
-            pretrained_model='swin_t',
-            freeze_backbone=freeze_backbone,
-            pretrained_weights_filepath=pretrained_weights_filepath,
-            use_gelu=use_gelu,
-        )
-    elif model == 'resnext50_32x4d':
-        model = PreTrainNet(
-            slice_depth=slice_depth,
-            pretrained_model='resnext50_32x4d',
-            freeze_backbone=freeze_backbone,
-            pretrained_weights_filepath=pretrained_weights_filepath,
-            use_gelu=use_gelu,
-        )
+    model = load_model(
+        model=model,
+        slice_depth=slice_depth,
+        use_gelu=use_gelu,
+        freeze_backbone=freeze_backbone,
+        pretrained_weights_filepath=pretrained_weights_filepath,
+    )
     model = model.to(device)
     loss_fn = nn.BCEWithLogitsLoss()
 
@@ -517,6 +530,7 @@ def train_loop(
 
                 # Check if we have exceeded the time limit
                 time_elapsed = time.time() - time_start
+                print(f"Time elapsed: {time_elapsed} seconds")
                 if time_elapsed > time_train_max_seconds:
                     print("Time limit exceeded, stopping batches")
                     break
@@ -660,3 +674,99 @@ def train_loop(
         save_rle_as_image(submission_filepath, output_dir, subtest_name, pred_image.shape)
 
     return best_score
+
+def eval(
+    model_output_path: str,
+    hparams_filename: str = 'hparams.yaml',
+    pretrained_weights_filepath: str = 'model.pth',
+):
+    # Get hyperparams from text file
+    _hparams_filepath = os.path.join(model_output_path, hparams_filename)
+    with open(_hparams_filepath, 'r') as f:
+        hparams = yaml.load(f, Loader=yaml.FullLoader)
+
+    # Get GPU 
+    device = get_device()
+    clear_gpu_memory()
+
+    # Load the model, try to fit on GPU
+    model = load_model(
+        model=model,
+        slice_depth=hparams['slice_depth'],
+        use_gelu=hparams['use_gelu'],
+        freeze_backbone=hparams['freeze_backbone'],
+        pretrained_weights_filepath=hparams['pretrained_weights_filepath'],
+    )
+    model = model.to(device)
+
+
+def objective(hparams) -> float:
+
+    # Print hyperparam dict with logging
+    print(f"\n\nHyperparams:\n\n{pprint.pformat(hparams)}\n\n")
+
+    # Add UUID to run name for ultimate uniqueness
+    run_name: str = str(uuid.uuid4())[:8] + '_'
+    for key, value in hparams.items():
+        # Choose name of run based on hparams
+        if key in [
+            'model',
+            'freeze_backbone',
+            'use_gelu',
+            'curriculum',
+            'optimizer',
+            'lr_scheduling_gamma',
+            'image_augs',
+            # 'patch_size_x',
+            # 'patch_size_y',
+            'resize_ratio',
+            # 'num_epochs',
+            # 'batch_size',
+            'lr',
+            'max_samples_per_dataset',
+        ]:
+            run_name += f'{key}_{str(value)}_'
+
+    # Create directory based on run_name
+    output_dir = os.path.join(hparams['output_dir'], run_name)
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Save hyperparams to file with YAML
+    with open(os.path.join(output_dir, hparams['hparams_filename']), 'w') as f:
+        yaml.dump(hparams, f)
+    
+    try:
+        # Train and evaluate a TFLite model
+        score: float = train_loop(
+            # Directories and datasets
+            output_dir=output_dir,
+            train_dir=hparams['train_dir'],
+            eval_dir=hparams['eval_dir'],
+            curriculum=hparams['curriculum'],
+            image_augs=hparams['image_augs'],
+            resize_ratio=hparams['resize_ratio'],
+            num_workers=hparams['num_workers'],
+            max_samples_per_dataset=hparams['max_samples_per_dataset'],
+            # Model and training
+            model=hparams['model'],
+            freeze_backbone=hparams['freeze_backbone'],
+            optimizer=hparams['optimizer'],
+            lr_scheduling_gamma=hparams['lr_scheduling_gamma'],
+            use_gelu=hparams['use_gelu'],
+            slice_depth=hparams['slice_depth'],
+            patch_size_x=hparams['patch_size_x'],
+            patch_size_y=hparams['patch_size_y'],
+            batch_size=hparams['batch_size'],
+            lr=hparams['lr'],
+            num_epochs=hparams['num_epochs'],
+            save_pred_img=True,
+            save_submit_csv=False,
+            write_logs = True,
+            save_model=True,
+            max_time_hours = 8,
+        )
+    except Exception as e:
+        print(f"\n\n Model Training FAILED with \n{e}\n\n")
+        score = 0
+    # Maximize score is minimize negative score
+    return -score

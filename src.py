@@ -326,6 +326,7 @@ def train(
     optimizer: str = "adam",
     curriculum: str = "1",
     num_samples: int = 100,
+    num_workers: int = 1,
     output_dir: str = "output/train",
     image_augs: bool = False,
     use_gelu: bool = False,
@@ -337,10 +338,9 @@ def train(
     lr: float = 0.001,
     lr_gamma: float = None,
     num_epochs: int = 2,
-    num_workers: int = 1,
-    writer: bool = False,
-    save_model: bool = False,
     max_time_hours: float = 8,
+    writer: SummaryWriter = None,
+    save_model: bool = True,
     **kwargs,
 ):
     # Notebook will only run for this amount of time

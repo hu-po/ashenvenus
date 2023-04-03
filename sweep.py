@@ -24,12 +24,12 @@ search_space = {
     ]),
     'model': hp.choice('model', [
         'convnext_tiny',
-        'convnext_small',
-        'convnext_base',
-        'convnext_large',
+        # 'convnext_small',
+        # 'convnext_base',
+        # 'convnext_large',
         'resnext50_32x4d',
-        'resnext101_32x8d',
-        'resnext101_64x4d',
+        # 'resnext101_32x8d',
+        # 'resnext101_64x4d',
     ]),
     'freeze': hp.choice('freeze', [
         # Doesn't seem to matter much, which is odd
@@ -59,33 +59,32 @@ search_space = {
     ]),
     'slice_depth': 65,
     'num_workers': 0,
+    'resize_ratio': hp.choice('resize_ratio', [0.08]),
+    'patch_size_x': hp.choice('patch_size_x', [64]),
+    'patch_size_y': hp.choice('patch_size_y', [64]),
     'batch_size': hp.choice('batch_size', [32]),
     'lr': hp.loguniform('lr',  np.log(0.0000001), np.log(0.001)),
     'num_epochs': hp.choice('num_epochs', [8, 16]),
-    'patch_size_x': hp.choice('patch_size_x', [64]),
-    'patch_size_y': hp.choice('patch_size_y', [64]),
-    'resize_ratio': hp.choice('resize_ratio', [0.08]),
     'num_samples': hp.choice('num_samples', [
         # Larger is better, strongest predictor of score
         60000,
         1000,
     ]),
     'max_time_hours': hp.choice('max_time_hours', [2, 8]),
+    'threshold': hp.choice('threshold', [0.5]),
+    'postproc_kernel': hp.choice('postproc_kernel', [3, 6]),
 }
 
 if __name__ == '__main__':
-
     args = parser.parse_args()
     if args.seed == 420:
         print('TEST MODE')
+        search_space['curriculum'] = '1'
         search_space['num_samples'] = 64
         search_space['num_epochs'] = 2
         search_space['slice_depth'] = 2
         search_space['resize_ratio'] = 0.05
-
     search_space['batch_size'] = args.batch_size
-    print('Using batch size:', search_space['batch_size'])
-    # Run the optimization
     best = fmin(
         sweep_episode,
         space=search_space,

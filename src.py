@@ -4,6 +4,7 @@ import os
 import subprocess
 import time
 from typing import Union
+import shutil
 
 import numpy as np
 import PIL.Image as Image
@@ -236,22 +237,22 @@ def dice_score(preds, label, beta=0.5, epsilon=1e-6):
     # https://en.wikipedia.org/wiki/S%C3%B8rensen%E2%80%93Dice_coefficient
     preds = torch.sigmoid(preds)
     preds = preds.flatten()
-    print(f"Predictions tensor shape: {preds.shape}")
-    print(f"Predictions tensor dtype: {preds.dtype}")
-    print(f"Predictions tensor min: {preds.min()}")
-    print(f"Predictions tensor max: {preds.max()}")
+    # print(f"Predictions tensor shape: {preds.shape}")
+    # print(f"Predictions tensor dtype: {preds.dtype}")
+    # print(f"Predictions tensor min: {preds.min()}")
+    # print(f"Predictions tensor max: {preds.max()}")
     label = label.flatten()
-    print(f"Label tensor shape: {label.shape}")
-    print(f"Label tensor dtype: {label.dtype}")
-    print(f"Label tensor min: {label.min()}")
-    print(f"Label tensor max: {label.max()}")
+    # print(f"Label tensor shape: {label.shape}")
+    # print(f"Label tensor dtype: {label.dtype}")
+    # print(f"Label tensor min: {label.min()}")
+    # print(f"Label tensor max: {label.max()}")
     tp = preds[label==1].sum()
     fp = preds[label==0].sum()
     fn = label.sum() - tp
     p = tp / (tp + fp + epsilon)
     r = tp / (tp + fn + epsilon)
     _score = (1 + beta * beta) * (p * r) / (beta * beta * p + r + epsilon)
-    print(f"DICE score: {_score}")
+    # print(f"DICE score: {_score}")
     return _score
 
 
@@ -317,7 +318,7 @@ class Vesuvius(nn.Module):
         return x
 
 
-def train_loop(
+def train(
     train_dir: str = "data/train/",
     model: str = "simplenet",
     freeze: bool = False,
@@ -340,6 +341,7 @@ def train_loop(
     writer: bool = False,
     save_model: bool = False,
     max_time_hours: float = 8,
+    **kwargs,
 ):
     # Notebook will only run for this amount of time
     print(f"Training will run for {max_time_hours} hours")
@@ -451,7 +453,6 @@ def train_loop(
 
                 # Check if we have exceeded the time limit
                 time_elapsed = time.time() - time_start
-                print(f"Time elapsed: {time_elapsed} seconds")
                 if time_elapsed > time_train_max_seconds:
                     print("Time limit exceeded, stopping batches")
                     break
@@ -477,6 +478,7 @@ def train_loop(
             if time_elapsed > time_train_max_seconds:
                 print("Time limit exceeded, stopping curriculum")
                 break
+        print(f"Time elapsed: {time_elapsed} seconds")
 
         if lr_gamma is not None:
             before_lr = optimizer.param_groups[0]["lr"]
@@ -490,11 +492,8 @@ def train_loop(
         if time_elapsed > time_train_max_seconds:
             print("Time limit exceeded, stopping training")
             break
-
-    if writer:
-        writer.close()  # Close the SummaryWriter
-
-    return best_score, model, writer
+        
+    return best_score, model
 
 def eval(
     eval_dir: str = "data/eval/",
@@ -509,11 +508,12 @@ def eval(
     freeze: bool = False,
     batch_size: int = 16,
     num_workers: int = 1,
-    save_pred_img: bool = False,
+    save_pred_img: bool = True,
     save_submit_csv: bool = False,
     threshold: float = 0.5,
-    postprocess: bool = True,
+    postproc_kernel: int = 3,
     writer: SummaryWriter = None,
+    **kwargs,
 ):
     # Get GPU 
     device = get_device()
@@ -578,22 +578,29 @@ def eval(
         print(f"Prediction image {subtest_name} shape: {pred_image.shape}")
         print(f"Prediction image min: {pred_image.min()}, max: {pred_image.max()}")
 
+        # score = 0
         for i, batch in enumerate(tqdm(eval_dataloader)):
             batch = batch.to(device)
             batch = img_transform(batch)
             with torch.no_grad():
                 preds = model(batch)
                 preds = torch.sigmoid(preds)
+                # score += dice_score(pred, label)
 
             # Iterate through each image and prediction in the batch
             for j, pred in enumerate(preds):
                 pixel_index = eval_dataset.mask_indices[i * batch_size + j]
                 pred_image[pixel_index[0], pixel_index[1]] = pred
 
+        # # Score is average dice score for all batches
+        # score /= len(eval_dataloader)
+        # if writer:
+        #     writer.add_scalar(f'Dice/{subtest_name}/eval', score)
+
         if writer is not None:
             print("Writing prediction image to TensorBoard...")
             # Add batch dimmension to pred_image for Tensorboard
-            writer.add_image(f'pred_{subtest_name}', np.expand_dims(pred_image, axis=0), step)
+            writer.add_image(f'pred_{subtest_name}', np.expand_dims(pred_image, axis=0))
 
         # Resize pred_image to original size
         img = Image.fromarray(pred_image * 255).convert('1')
@@ -607,12 +614,11 @@ def eval(
             _image_filepath = os.path.join(output_dir, f"pred_{subtest_name}.png")
             img.save(_image_filepath)
 
-        if postprocess:
+        if postproc_kernel is not None:
             print("Postprocessing...")
             # Erosion then Dilation 
-            _filter_size = 3
-            img = img.filter(ImageFilter.MinFilter(_filter_size))
-            img = img.filter(ImageFilter.MaxFilter(_filter_size))
+            img = img.filter(ImageFilter.MinFilter(postproc_kernel))
+            img = img.filter(ImageFilter.MaxFilter(postproc_kernel))
 
         if save_pred_img:
             print("Saving prediction image...")
@@ -656,45 +662,44 @@ def sweep_episode(hparams) -> float:
     # Add UUID to run name for ultimate uniqueness
     run_name: str = str(uuid.uuid4())[:8] + '_'
     for key, value in hparams.items():
-        # Choose name of run based on hparams
-        if key in [
-            'model',
-            'freeze',
-            'use_gelu',
-            'curriculum',
-            'optimizer',
-            'lr_gamma',
-            'image_augs',
-            # 'patch_size_x',
-            # 'patch_size_y',
-            'resize_ratio',
-            # 'num_epochs',
-            # 'batch_size',
-            'lr',
-            'num_samples',
+        if key not in [
+            'eval_dir',
+            'num_workers',
+            'output_dir',
+            'train_dir',
         ]:
             run_name += f'{key}_{str(value)}_'
+    # Make sure run_name is not too long
+    run_name = run_name[:255]
 
-    # Create directory based on run_name
-    output_dir = os.path.join(hparams['output_dir'], run_name)
+    # Clean output dir
+    output_dir = hparams['output_dir']
+    shutil.rmtree(output_dir, ignore_errors=True)
     os.makedirs(output_dir, exist_ok=True)
 
+    # Create directory based on run_name
+    episode_dir = os.path.join(output_dir, run_name)
+    os.makedirs(episode_dir, exist_ok=True)
+
     # Save hyperparams to file with YAML
-    with open(os.path.join(output_dir, hparams['hparams_filename']), 'w') as f:
+    with open(os.path.join(episode_dir, 'hparams.yaml'), 'w') as f:
         yaml.dump(hparams, f)
     
     try:
-        writer = SummaryWriter(log_dir=output_dir)
+        hparams['output_dir'] = episode_dir
+        writer = SummaryWriter(log_dir=episode_dir)
         # Train and evaluate a TFLite model
-        score, model = train_loop(
+        score, model = train(
             **hparams,
             writer = writer,
         )
+        del hparams['model']
         eval(
             **hparams,
             model=model,
             writer=writer,
         )
+        writer.close()
     except Exception as e:
         print(f"\n\n Model Training FAILED with \n{e}\n\n")
         score = 0

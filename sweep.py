@@ -74,6 +74,11 @@ search_space = {
         0.2,
         0.3,
     ]),
+    'interpolation': hp.choice('interpolation', [
+        'bilinear',
+        'bicubic',
+        'nearest',
+    ]),
     'input_size': hp.choice('input_size', [
         '224.224.65',
         '68.68.65',

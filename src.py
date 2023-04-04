@@ -40,8 +40,10 @@ class PatchDataset(data.Dataset):
         patch_size_y: int = 256,
         # Image resize ratio
         resize_ratio: float = 1.0,
+        interpolation: str = 'bilinear',
         # Training vs Testing mode
         train: bool = True,
+        # Type of interpolation to use when resizing
         # Filenames of the images we'll use
         image_mask_filename='mask.png',
         image_labels_filename='inklabels.png',
@@ -71,7 +73,7 @@ class PatchDataset(data.Dataset):
         )
         # Resize the mask
         # print(f"Mask original size: {original_size}")
-        _mask_img = _mask_img.resize(self.resized_size, resample=Image.BILINEAR)
+        _mask_img = _mask_img.resize(self.resized_size, resample=INTERPOLATION_MODES[interpolation])
         # print(f"Mask resized size: {_mask_img.size}")
         _mask = torch.from_numpy(np.array(_mask_img)).to(torch.bool)
         # print(f"Mask tensor shape: {_mask.shape}")
@@ -82,7 +84,7 @@ class PatchDataset(data.Dataset):
             _labels_img = Image.open(_image_labels_filepath).convert("1")
             # print(f"Labels original size: {original_size}")
             _labels_img = _labels_img.resize(
-                self.resized_size, resample=Image.BILINEAR)
+                self.resized_size, resample=INTERPOLATION_MODES[interpolation])
             # print(f"Labels resized size: {_labels_img.size}")
             self.labels = torch.from_numpy(
                 np.array(_labels_img)).to(torch.bool)
@@ -104,7 +106,7 @@ class PatchDataset(data.Dataset):
             _slice_img = Image.open(_slice_filepath).convert('F')
             # print(f"Slice original size: {original_size}")
             _slice_img = _slice_img.resize(
-                self.resized_size, resample=Image.BILINEAR)
+                self.resized_size, resample=INTERPOLATION_MODES[interpolation])
             # print(f"Slice resized size: {_slice_img.size}")
             _slice = torch.from_numpy(np.array(_slice_img)/65535.0)
             # print(f"Slice tensor shape: {_slice.shape}")
@@ -271,6 +273,13 @@ def clear_gpu_memory():
         torch.cuda.empty_cache()
         gc.collect()
 
+# Types of interpolation used in resizing
+INTERPOLATION_MODES = {
+        'bilinear': Image.BILINEAR,
+        'bicubic': Image.BICUBIC,
+        'nearest': Image.NEAREST,
+}
+
 class ImageModel(nn.Module):
 
     models = {
@@ -378,6 +387,7 @@ def train(
     patch_size_x: int = 512,
     patch_size_y: int = 128,
     resize_ratio: float = 1.0,
+    interpolation: str = "bilinear",
     batch_size: int = 16,
     lr: float = 0.001,
     lr_gamma: float = None,
@@ -466,6 +476,7 @@ def train(
                 patch_size_y=patch_size_y,
                 # Image resize ratio
                 resize_ratio=resize_ratio,
+                interpolation=interpolation,
                 # Training vs Testing mode
                 train=True,
             )
@@ -573,6 +584,7 @@ def eval(
     patch_size_x: int = 512,
     patch_size_y: int = 128,
     resize_ratio: float = 1.0,
+    interpolation: str = "bilinear",
     use_gelu: bool = False,
     freeze: bool = False,
     kernel_size: int = 3,
@@ -640,6 +652,7 @@ def eval(
             patch_size_y=patch_size_y,
             # Image resize ratio
             resize_ratio=resize_ratio,
+            interpolation=interpolation,
             # Training vs Testing mode
             train=False,
         )
@@ -690,7 +703,7 @@ def eval(
         img = img.resize((
             eval_dataset.original_size[0],
             eval_dataset.original_size[1],
-        ), resample=Image.BILINEAR)
+        ), resample=INTERPOLATION_MODES[interpolation])
 
         if save_pred_img:
             print("Saving prediction image...")

@@ -286,19 +286,17 @@ class ImageModel(nn.Module):
     def __init__(
         self,
         slice_depth: int = 65,
-        kernel_size: int = 3,
-        use_gelu: bool = False,
         model: str = 'convnext_tiny',
         load_fresh: bool = False,
         freeze: bool = False,
     ):
         super().__init__()
         print(f"Initializing new model: {model}")
-        if use_gelu:
-            self.af = nn.GELU()
-        else:
-            self.af = nn.ReLU()
-        self.conv = nn.Conv2d(slice_depth, 3, kernel_size)
+        # Channel reduction
+        self.channel_reduce = nn.Sequential(
+            nn.Conv2d(slice_depth, 3, 1),
+            nn.Tanh(),
+        )
         assert model in self.models, f"Model {model} not supported"
         _f, weights = self.models[model]
         # Optionally load fresh pre-trained model from scratch
@@ -309,12 +307,17 @@ class ImageModel(nn.Module):
         else:
             self.model.train()
         # Binary classification head on top
-        self.fc = nn.LazyLinear(1)
+        self.head = nn.Sequential(
+            nn.BatchNorm1d(1000),
+            nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(1000, 1),
+        )
 
     def forward(self, x):
-        x = self.af(self.conv(x))
-        x = self.af(self.model(x))
-        x = self.fc(x)
+        x = self.channel_reduce(x)
+        x = self.model(x)
+        x = self.head(x)
         return x
 
 class VideoModel(nn.Module):
@@ -328,18 +331,12 @@ class VideoModel(nn.Module):
     def __init__(
         self,
         slice_depth: int = 65,
-        kernel_size: int = 3,
         model: str = 'r2plus1d_18',
-        use_gelu: bool = False,
         load_fresh: bool = False,
         freeze: bool = False,
     ):
         super().__init__()
         print(f"Initializing new model: {model}")
-        if use_gelu:
-            self.af = nn.GELU()
-        else:
-            self.af = nn.ReLU()
         assert model in self.models, f"Model {model} not supported"
         _f, weights = self.models[model]
         # Optionally load fresh pre-trained model from scratch
@@ -350,12 +347,17 @@ class VideoModel(nn.Module):
         else:
             self.model.train()
         # Binary classification head on top
-        self.fc = nn.LazyLinear(1)
+        self.head = nn.Sequential(
+            nn.BatchNorm1d(400),
+            nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(400, 1),
+        )
 
     def forward(self, x):
         x = x.view(x.shape[0], -1, 3, x.shape[-2], x.shape[-1])
-        x = self.af(self.model(x))
-        x = self.fc(x)
+        x = self.model(x)
+        x = self.head(x)
         return x
 
 def train(
@@ -364,6 +366,7 @@ def train(
     freeze: bool = False,
     weights_filepath: str = None,
     optimizer: str = "adam",
+    weight_decay: float = 0.,
     curriculum: str = "1",
     num_samples: int = 100,
     num_workers: int = 1,
@@ -424,10 +427,13 @@ def train(
 
     # Create optimizers
     if optimizer == "adam":
-        optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+        optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
     elif optimizer == "sgd":
-        optimizer = torch.optim.SGD(model.parameters(), lr=lr)
+        optimizer = torch.optim.SGD(model.parameters(), lr=lr, weight_decay=weight_decay)
     loss_fn = nn.BCEWithLogitsLoss()
+
+    # Scaler for mixed precision training
+    scaler = torch.cuda.amp.GradScaler()
 
     if lr_gamma is not None:
         scheduler = lr_scheduler.ExponentialLR(
@@ -474,6 +480,7 @@ def train(
                 img_transform_list += [
                     transforms.RandomHorizontalFlip(),
                     transforms.RandomVerticalFlip(),
+                    # transforms.GaussianBlur(),
                 ]
             img_transform = transforms.Compose(img_transform_list)
 
@@ -486,22 +493,28 @@ def train(
                 num_workers=num_workers,
                 # This will make it go faster if it is loaded into a GPU
                 pin_memory=True,
+                transforms=img_transform,
             )
 
             print(f"Training...")
             train_loss = 0
             score = 0
-            for patch, label in tqdm(train_dataloader):
-                optimizer.zero_grad()
+            _loader = tqdm(train_dataloader)
+            for patch, label in _loader:
                 # writer.add_histogram('patch_input', patch, step)
                 # writer.add_histogram('label_input', label, step)
                 patch = patch.to(device)
-                patch = img_transform(patch)
-                pred = model(patch)
                 label = label.to(device)
-                loss = loss_fn(pred, label)
-                loss.backward()
-                optimizer.step()
+                with torch.cuda.amp.autocast():
+                    pred = model(patch)
+                    loss = loss_fn(pred, label)
+                optimizer.zero_grad()
+                scaler.scale(loss).backward()
+                scaler.step(optimizer)
+                scaler.update()
+
+                _loader.set_postfix_str(f"Train.{current_dataset_id}.{loss_fn.__class__.__name__}: {loss.item():.4f}")
+                
                 step += 1
                 with torch.no_grad():
                     train_loss += loss.item()
@@ -639,10 +652,10 @@ def eval(
             num_workers=num_workers,
             # This will make it go faster if it is loaded into a GPU
             pin_memory=True,
+            transforms=transforms.Compose([
+                transforms.Normalize(eval_dataset.mean, eval_dataset.std),
+            ])
         )
-        img_transform = transforms.Compose([
-            transforms.Normalize(eval_dataset.mean, eval_dataset.std)
-        ])
 
         # Make a blank prediction image
         pred_image = np.zeros(eval_dataset.resized_size, dtype=np.float32).T
@@ -652,7 +665,6 @@ def eval(
         # score = 0
         for i, batch in enumerate(tqdm(eval_dataloader)):
             batch = batch.to(device)
-            batch = img_transform(batch)
             with torch.no_grad():
                 preds = model(batch)
                 preds = torch.sigmoid(preds)

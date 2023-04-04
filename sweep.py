@@ -53,6 +53,14 @@ search_space = {
         'adam',
         # 'sgd', # Garbo
     ]),
+    'weight_decay': hp.choice('weight_decay', [
+        0,
+        1e-5,
+        5e-5,
+        1e-4,
+        5e-4,
+        1e-3,
+    ]),
     'lr_gamma': hp.choice('lr_gamma', [
         # Doesn't seem to matter much between 0.9 and None (1.0)
         # 0.1, # Garbo

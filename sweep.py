@@ -61,7 +61,11 @@ search_space = {
         # None,
     ]),
     'num_workers': 0,
-    'resize_ratio': hp.choice('resize_ratio', [0.3]),
+    'resize_ratio': hp.choice('resize_ratio', [
+        # 0.1,
+        # 0.3,
+        0.5,
+    ]),
     'input_size': hp.choice('input_size', [
         '224.224.65',
         '68.68.65',

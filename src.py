@@ -678,7 +678,11 @@ def sweep_episode(hparams) -> float:
     os.makedirs(hparams['output_dir'], exist_ok=True)
 
     # HACK: Simpler parameters based
-    hparams['slice_depth'], hparams['patch_size_x'], hparams['patch_size_y'] = hparams['input_size'].split('.')
+    # split input size string into 3 integers
+    _input_size = [int(x) for x in hparams['input_size'].split('.')]
+    hparams['patch_size_x'] = _input_size[0]
+    hparams['patch_size_y'] = _input_size[1]
+    hparams['slice_depth'] = _input_size[2]
 
     # Save hyperparams to file with YAML
     with open(os.path.join(hparams['output_dir'], 'hparams.yaml'), 'w') as f:
@@ -693,11 +697,12 @@ def sweep_episode(hparams) -> float:
         )
         writer.add_hparams(hparams, {'dice_score': score})
         del hparams['model']
-        eval(
-            **hparams,
-            model=model,
-            writer=writer,
-        )
+        # Eval takes a while, make sure you actually want to do this.
+        # eval(
+        #     **hparams,
+        #     model=model,
+        #     writer=writer,
+        # )
         writer.close()
     except Exception as e:
         print(f"\n\n Model Training FAILED with \n{e}\n\n")

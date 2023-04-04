@@ -363,7 +363,10 @@ def train(
         )    
         if weights_filepath is not None:
             print(f"Loading weights from {weights_filepath}")
-            model.load_state_dict(torch.load(weights_filepath))
+            model.load_state_dict(torch.load(
+                weights_filepath,
+                map_location=device,
+            ))
     model = model.to(device)
     model.train()
 
@@ -530,7 +533,10 @@ def eval(
         )    
         if weights_filepath is not None:
             print(f"Loading weights from {weights_filepath}")
-            model.load_state_dict(torch.load(weights_filepath))
+            model.load_state_dict(torch.load(
+                weights_filepath,
+                map_location=device,
+            ))
     model = model.to(device)
     model.eval()
 

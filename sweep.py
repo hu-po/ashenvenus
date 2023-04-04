@@ -63,7 +63,7 @@ search_space = {
     'num_workers': 0,
     'resize_ratio': hp.choice('resize_ratio', [
         # 0.1,
-        # 0.3,
+        0.3,
         0.5,
     ]),
     'input_size': hp.choice('input_size', [
@@ -79,8 +79,8 @@ search_space = {
     'num_samples': hp.choice('num_samples', [
         # Larger is better, strongest predictor of score
         # 200000,
-        100000,
-        # 60000,
+        80000,
+        40000,
         # 8000,
     ]),
     'max_time_hours': hp.choice('max_time_hours', [

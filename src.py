@@ -41,6 +41,8 @@ class PatchDataset(data.Dataset):
         # Image resize ratio
         resize_ratio: float = 1.0,
         interpolation: str = 'bilinear',
+        # Tranforms to apply to the images
+        transforms=None,
         # Training vs Testing mode
         train: bool = True,
         # Type of interpolation to use when resizing
@@ -54,6 +56,8 @@ class PatchDataset(data.Dataset):
         self.train = train
         # Resize ratio reduces the size of the image
         self.resize_ratio = resize_ratio
+        # Transforms to apply to the images
+        self.transforms = transforms
         # Data will be B x slice_depth x patch_size_x x patch_size_y
         self.patch_size_x = patch_size_x
         self.patch_size_y = patch_size_y
@@ -178,6 +182,10 @@ class PatchDataset(data.Dataset):
         # print(f"Patch tensor dtype: {patch.dtype}")
         # print(f"Patch tensor min: {patch.min()}")
         # print(f"Patch tensor max: {patch.max()}")
+
+        # Apply transforms to patch
+        if self.transforms:
+            patch = self.transforms(patch)
 
         # Label is going to be the label of the center voxel
         if self.train:
@@ -381,8 +389,6 @@ def train(
     num_workers: int = 1,
     output_dir: str = "output/train",
     image_augs: bool = False,
-    use_gelu: bool = False,
-    kernel_size: int = 3,
     slice_depth: int = 3,
     patch_size_x: int = 512,
     patch_size_y: int = 128,
@@ -413,15 +419,12 @@ def train(
             model = ImageModel(
                 model = model,
                 slice_depth=slice_depth,
-                use_gelu=use_gelu,
                 freeze=freeze,
-                kernel_size=kernel_size,
             )
         elif model in ["r2plus1d_18"]:
             model = VideoModel(
                 model = model,
                 slice_depth=slice_depth,
-                use_gelu=use_gelu,
                 freeze=freeze,
             )
         else:
@@ -585,9 +588,7 @@ def eval(
     patch_size_y: int = 128,
     resize_ratio: float = 1.0,
     interpolation: str = "bilinear",
-    use_gelu: bool = False,
     freeze: bool = False,
-    kernel_size: int = 3,
     batch_size: int = 16,
     num_workers: int = 1,
     save_pred_img: bool = True,
@@ -607,15 +608,12 @@ def eval(
             model = ImageModel(
                 model = model,
                 slice_depth=slice_depth,
-                use_gelu=use_gelu,
                 freeze=freeze,
-                kernel_size=kernel_size,
             )
         elif model in ["r2plus1d_18"]:
             model = VideoModel(
                 model = model,
                 slice_depth=slice_depth,
-                use_gelu=use_gelu,
                 freeze=freeze,
             )
         else:

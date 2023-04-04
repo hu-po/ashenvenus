@@ -39,11 +39,6 @@ search_space = {
         True,
         # False,
     ]),
-    'use_gelu' : hp.choice('use_gelu', [
-        # ReLU seems better than GeLU
-        # True,
-        False,
-    ]),
     'image_augs': hp.choice('image_augs', [
         # Hurts a little more than helps, but doesn't matter much
         # True,
@@ -82,10 +77,6 @@ search_space = {
     'input_size': hp.choice('input_size', [
         '224.224.65',
         '68.68.65',
-    ]),
-    'kernel_size': hp.choice('kernel_size', [
-        3,
-        64,
     ]),
     'lr': hp.loguniform('lr',  np.log(0.0000001), np.log(0.001)),
     'num_epochs': hp.choice('num_epochs', [16]),

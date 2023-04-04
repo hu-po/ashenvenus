@@ -2,7 +2,7 @@
 data/
 train/
 test/
-output/
+output*
 
 # Model images
 model_graph*

@@ -21,27 +21,27 @@ search_space = {
         # '2',
         # '3',
         # '13',
-        # '32',
+        '32',
         '123',
-        '321',
+        # '321',
     ]),
     'model': hp.choice('model', [
-        'convnext_tiny',
-        'convnext_small',
-        'convnext_base',
-        # 'convnext_large',
-        'resnext50_32x4d',
-        # 'resnext101_32x8d',
-        # 'resnext101_64x4d',
+        # 'convnext_tiny',
+        # 'convnext_small',
+        # 'convnext_base',
+        'convnext_large',
+        # 'resnext50_32x4d',
+        'resnext101_32x8d',
+        'resnext101_64x4d',
     ]),
     'freeze': hp.choice('freeze', [
         # Doesn't seem to matter much, which is odd
         True,
-        False,
+        # False,
     ]),
     'use_gelu' : hp.choice('use_gelu', [
-        # Doesn't seem to matter much, maybe slight gain
-        True,
+        # ReLU seems better than GeLU
+        # True,
         False,
     ]),
     'image_augs': hp.choice('image_augs', [
@@ -60,21 +60,27 @@ search_space = {
         0.98,
         # None,
     ]),
-    'slice_depth': 65,
     'num_workers': 0,
-    'resize_ratio': hp.choice('resize_ratio', [0.08]),
-    'patch_size_x': hp.choice('patch_size_x', [64]),
-    'patch_size_y': hp.choice('patch_size_y', [64]),
+    'resize_ratio': hp.choice('resize_ratio', [0.3]),
+    'input_size': hp.choice('input_size', [
+        '224.224.65',
+        '68.68.65',
+    ]),
+    'kernel_size': hp.choice('kernel_size', [
+        3,
+        64,
+    ]),
     'lr': hp.loguniform('lr',  np.log(0.0000001), np.log(0.001)),
-    'num_epochs': hp.choice('num_epochs', [8, 16]),
+    'num_epochs': hp.choice('num_epochs', [16, 32]),
     'num_samples': hp.choice('num_samples', [
         # Larger is better, strongest predictor of score
-        120000,
-        60000,
-        8000,
+        200000,
+        # 100000,
+        # 60000,
+        # 8000,
     ]),
     'max_time_hours': hp.choice('max_time_hours', [
-        1,
+        # 1,
         8,
     ]),
     'threshold': hp.choice('threshold', [0.5]),
@@ -88,7 +94,6 @@ if __name__ == '__main__':
         search_space['curriculum'] = '1'
         search_space['num_samples'] = 64
         search_space['num_epochs'] = 2
-        search_space['slice_depth'] = 2
         search_space['resize_ratio'] = 0.05
     search_space['batch_size'] = args.batch_size
 

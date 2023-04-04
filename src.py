@@ -330,6 +330,7 @@ def train(
     output_dir: str = "output/train",
     image_augs: bool = False,
     use_gelu: bool = False,
+    kernel_size: int = 3,
     slice_depth: int = 3,
     patch_size_x: int = 512,
     patch_size_y: int = 128,
@@ -360,6 +361,7 @@ def train(
             slice_depth=slice_depth,
             use_gelu=use_gelu,
             freeze=freeze,
+            kernel_size=kernel_size,
         )    
         if weights_filepath is not None:
             print(f"Loading weights from {weights_filepath}")
@@ -510,6 +512,7 @@ def eval(
     resize_ratio: float = 1.0,
     use_gelu: bool = False,
     freeze: bool = False,
+    kernel_size: int = 3,
     batch_size: int = 16,
     num_workers: int = 1,
     save_pred_img: bool = True,
@@ -530,6 +533,7 @@ def eval(
             slice_depth=slice_depth,
             use_gelu=use_gelu,
             freeze=freeze,
+            kernel_size=kernel_size,
         )    
         if weights_filepath is not None:
             print(f"Loading weights from {weights_filepath}")
@@ -672,6 +676,9 @@ def sweep_episode(hparams) -> float:
     run_name: str = str(uuid.uuid4())[:8]
     hparams['output_dir'] = os.path.join(hparams['output_dir'], run_name)
     os.makedirs(hparams['output_dir'], exist_ok=True)
+
+    # HACK: Simpler parameters based
+    hparams['slice_depth'], hparams['patch_size_x'], hparams['patch_size_y'] = hparams['input_size'].split('.')
 
     # Save hyperparams to file with YAML
     with open(os.path.join(hparams['output_dir'], 'hparams.yaml'), 'w') as f:

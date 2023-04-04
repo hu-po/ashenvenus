@@ -497,10 +497,10 @@ def train(
     return best_score, model
 
 def eval(
-    eval_dir: str = "data/eval/",
+    eval_dir: str = "data/test/",
     weights_filepath: str = None,
     model: Union[str, nn.Module] = "convnext_tiny",
-    output_dir: str = "output/train",
+    output_dir: str = "output",
     slice_depth: int = 3,
     patch_size_x: int = 512,
     patch_size_y: int = 128,
@@ -646,6 +646,7 @@ def eval_from_episode_dir(
     _hparams_filepath = os.path.join(episode_dir, hparams_filename)
     with open(_hparams_filepath, 'r') as f:
         hparams = yaml.load(f, Loader=yaml.FullLoader)
+    print(f"Hyperparams:\n{pprint.pformat(hparams)}\n")
 
     _weights_filepath = os.path.join(episode_dir, weights_filename)
     eval(

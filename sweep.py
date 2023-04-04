@@ -75,11 +75,11 @@ search_space = {
         64,
     ]),
     'lr': hp.loguniform('lr',  np.log(0.0000001), np.log(0.001)),
-    'num_epochs': hp.choice('num_epochs', [16, 32]),
+    'num_epochs': hp.choice('num_epochs', [16]),
     'num_samples': hp.choice('num_samples', [
         # Larger is better, strongest predictor of score
-        200000,
-        # 100000,
+        # 200000,
+        100000,
         # 60000,
         # 8000,
     ]),

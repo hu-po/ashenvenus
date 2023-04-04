@@ -639,6 +639,7 @@ def eval(
 
 def eval_from_episode_dir(
     episode_dir: str = None,
+    output_dir: str = None,
     hparams_filename: str = 'hparams.yaml',
     weights_filename: str = 'model.pth',
 ):
@@ -647,7 +648,7 @@ def eval_from_episode_dir(
     with open(_hparams_filepath, 'r') as f:
         hparams = yaml.load(f, Loader=yaml.FullLoader)
     print(f"Hyperparams:\n{pprint.pformat(hparams)}\n")
-
+    hparams['output_dir'] = output_dir
     _weights_filepath = os.path.join(episode_dir, weights_filename)
     eval(
         **hparams,

@@ -271,7 +271,7 @@ def clear_gpu_memory():
         torch.cuda.empty_cache()
         gc.collect()
 
-class Vesuvius(nn.Module):
+class ImageModel(nn.Module):
 
     models = {
         'convnext_tiny': (models.convnext_tiny, models.ConvNeXt_Tiny_Weights.DEFAULT),
@@ -317,6 +317,46 @@ class Vesuvius(nn.Module):
         x = self.fc(x)
         return x
 
+class VideoModel(nn.Module):
+
+    models = {
+        'r2plus1d_18': (models.video.r2plus1d_18, models.video.R2Plus1D_18_Weights.DEFAULT),
+        # 'swin3d_b': (models.video.swin3d_b, models.video.Swin3D_B_Weights.DEFAULT),
+        # 'mvit_v2_s': (models.video.mvit_v2_s, models.video.MViT_V2_S_Weights.DEFAULT),
+    }
+
+    def __init__(
+        self,
+        slice_depth: int = 65,
+        kernel_size: int = 3,
+        model: str = 'r2plus1d_18',
+        use_gelu: bool = False,
+        load_fresh: bool = False,
+        freeze: bool = False,
+    ):
+        super().__init__()
+        print(f"Initializing new model: {model}")
+        if use_gelu:
+            self.af = nn.GELU()
+        else:
+            self.af = nn.ReLU()
+        assert model in self.models, f"Model {model} not supported"
+        _f, weights = self.models[model]
+        # Optionally load fresh pre-trained model from scratch
+        self.model = _f(weights=weights if load_fresh else None)
+        # Put model in training mode
+        if freeze:
+            self.model.eval()
+        else:
+            self.model.train()
+        # Binary classification head on top
+        self.fc = nn.LazyLinear(1)
+
+    def forward(self, x):
+        x = x.view(x.shape[0], -1, 3, x.shape[-2], x.shape[-1])
+        x = self.af(self.model(x))
+        x = self.fc(x)
+        return x
 
 def train(
     train_dir: str = "data/train/",
@@ -356,13 +396,23 @@ def train(
 
     # Load the model, try to fit on GPU
     if isinstance(model, str):
-        model = Vesuvius(
-            model = model,
-            slice_depth=slice_depth,
-            use_gelu=use_gelu,
-            freeze=freeze,
-            kernel_size=kernel_size,
-        )    
+        if model in ["simplenet", "convnext_tiny", "convnext_small", "convnext_medium", "convnext_large", "resnext50_32x4d", "resnext101_32x8d", "resnext101_64x4d"]:
+            model = ImageModel(
+                model = model,
+                slice_depth=slice_depth,
+                use_gelu=use_gelu,
+                freeze=freeze,
+                kernel_size=kernel_size,
+            )
+        elif model in ["r2plus1d_18"]:
+            model = VideoModel(
+                model = model,
+                slice_depth=slice_depth,
+                use_gelu=use_gelu,
+                freeze=freeze,
+            )
+        else:
+            raise ValueError(f"Model {model} not supported")
         if weights_filepath is not None:
             print(f"Loading weights from {weights_filepath}")
             model.load_state_dict(torch.load(
@@ -528,13 +578,23 @@ def eval(
 
     # Load the model, try to fit on GPU
     if isinstance(model, str):
-        model = Vesuvius(
-            model = model,
-            slice_depth=slice_depth,
-            use_gelu=use_gelu,
-            freeze=freeze,
-            kernel_size=kernel_size,
-        )    
+        if model in ["simplenet", "convnext_tiny", "convnext_small", "convnext_medium", "convnext_large", "resnext50_32x4d", "resnext101_32x8d", "resnext101_64x4d"]:
+            model = ImageModel(
+                model = model,
+                slice_depth=slice_depth,
+                use_gelu=use_gelu,
+                freeze=freeze,
+                kernel_size=kernel_size,
+            )
+        elif model in ["r2plus1d_18"]:
+            model = VideoModel(
+                model = model,
+                slice_depth=slice_depth,
+                use_gelu=use_gelu,
+                freeze=freeze,
+            )
+        else:
+            raise ValueError(f"Model {model} not supported")
         if weights_filepath is not None:
             print(f"Loading weights from {weights_filepath}")
             model.load_state_dict(torch.load(

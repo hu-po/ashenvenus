@@ -41,8 +41,6 @@ class PatchDataset(data.Dataset):
         # Image resize ratio
         resize_ratio: float = 1.0,
         interpolation: str = 'bilinear',
-        # Tranforms to apply to the images
-        transforms=None,
         # Training vs Testing mode
         train: bool = True,
         # Type of interpolation to use when resizing
@@ -56,8 +54,6 @@ class PatchDataset(data.Dataset):
         self.train = train
         # Resize ratio reduces the size of the image
         self.resize_ratio = resize_ratio
-        # Transforms to apply to the images
-        self.transforms = transforms
         # Data will be B x slice_depth x patch_size_x x patch_size_y
         self.patch_size_x = patch_size_x
         self.patch_size_y = patch_size_y
@@ -105,7 +101,7 @@ class PatchDataset(data.Dataset):
         # print(f"Fragment tensor dtype: {self.fragment.dtype}")
         # Open up slices
         _slice_dir = os.path.join(data_dir, slices_dir_filename)
-        for i in tqdm(range(self.slice_depth)):
+        for i in tqdm(range(self.slice_depth), postfix='loading dataset'):
             _slice_filepath = os.path.join(_slice_dir, f"{i:02d}.tif")
             _slice_img = Image.open(_slice_filepath).convert('F')
             # print(f"Slice original size: {original_size}")
@@ -182,10 +178,6 @@ class PatchDataset(data.Dataset):
         # print(f"Patch tensor dtype: {patch.dtype}")
         # print(f"Patch tensor min: {patch.min()}")
         # print(f"Patch tensor max: {patch.max()}")
-
-        # Apply transforms to patch
-        if self.transforms:
-            patch = self.transforms(patch)
 
         # Label is going to be the label of the center voxel
         if self.train:
@@ -449,8 +441,7 @@ def train(
     scaler = torch.cuda.amp.GradScaler()
 
     if lr_gamma is not None:
-        scheduler = lr_scheduler.ExponentialLR(
-            optimizer, gamma=lr_gamma)
+        scheduler = lr_scheduler.ExponentialLR(optimizer, gamma=lr_gamma)
 
     # Writer for Tensorboard
     if writer:
@@ -486,7 +477,7 @@ def train(
             total_dataset_size = len(train_dataset)
             print(f"Raw train dataset size: {total_dataset_size}")
 
-            # Add augmentations
+            # Image augmentations
             img_transform_list = [
                 transforms.Normalize(train_dataset.mean, train_dataset.std)
             ]
@@ -507,7 +498,6 @@ def train(
                 num_workers=num_workers,
                 # This will make it go faster if it is loaded into a GPU
                 pin_memory=True,
-                transforms=img_transform,
             )
 
             print(f"Training...")
@@ -520,7 +510,7 @@ def train(
                 patch = patch.to(device)
                 label = label.to(device)
                 with torch.cuda.amp.autocast():
-                    pred = model(patch)
+                    pred = model(img_transform(patch))
                     loss = loss_fn(pred, label)
                 optimizer.zero_grad()
                 scaler.scale(loss).backward()
@@ -567,8 +557,7 @@ def train(
             before_lr = optimizer.param_groups[0]["lr"]
             scheduler.step()
             after_lr = optimizer.param_groups[0]["lr"]
-            print("Epoch %d: SGD lr %.4f -> %.4f" %
-                  (epoch, before_lr, after_lr))
+            print("Epoch %d: SGD lr %.4f -> %.4f" % (epoch, before_lr, after_lr))
 
         # Check if we have exceeded the time limit
         time_elapsed = time.time() - time_start
@@ -654,6 +643,9 @@ def eval(
             # Training vs Testing mode
             train=False,
         )
+        img_transforms = transforms.Compose([
+            transforms.Normalize(eval_dataset.mean, eval_dataset.std),
+        ])
 
         # DataLoaders
         eval_dataloader = DataLoader(
@@ -663,9 +655,6 @@ def eval(
             num_workers=num_workers,
             # This will make it go faster if it is loaded into a GPU
             pin_memory=True,
-            transforms=transforms.Compose([
-                transforms.Normalize(eval_dataset.mean, eval_dataset.std),
-            ])
         )
 
         # Make a blank prediction image
@@ -674,10 +663,10 @@ def eval(
         print(f"Prediction image min: {pred_image.min()}, max: {pred_image.max()}")
 
         # score = 0
-        for i, batch in enumerate(tqdm(eval_dataloader)):
-            batch = batch.to(device)
+        for i, patch in enumerate(tqdm(eval_dataloader, postfix=f"Eval {subtest_name}")):
+            patch = patch.to(device)
             with torch.no_grad():
-                preds = model(batch)
+                preds = model(img_transforms(patch))
                 preds = torch.sigmoid(preds)
                 # score += dice_score(pred, label)
 
@@ -781,11 +770,11 @@ def sweep_episode(hparams) -> float:
         writer.add_hparams(hparams, {'dice_score': score})
         del hparams['model']
         # Eval takes a while, make sure you actually want to do this.
-        # eval(
-        #     **hparams,
-        #     model=model,
-        #     writer=writer,
-        # )
+        eval(
+            **hparams,
+            model=model,
+            writer=writer,
+        )
         writer.close()
     except Exception as e:
         print(f"\n\n Model Training FAILED with \n{e}\n\n")

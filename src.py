@@ -18,6 +18,7 @@ from PIL import Image, ImageFilter
 from tensorboardX import SummaryWriter
 from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
 from torchvision import transforms, models
+import torch.quantization as quantization
 from tqdm import tqdm
 import os
 import pprint
@@ -73,7 +74,8 @@ class PatchDataset(data.Dataset):
         )
         # Resize the mask
         # print(f"Mask original size: {original_size}")
-        _mask_img = _mask_img.resize(self.resized_size, resample=INTERPOLATION_MODES[interpolation])
+        _mask_img = _mask_img.resize(
+            self.resized_size, resample=INTERPOLATION_MODES[interpolation])
         # print(f"Mask resized size: {_mask_img.size}")
         _mask = torch.from_numpy(np.array(_mask_img)).to(torch.bool)
         # print(f"Mask tensor shape: {_mask.shape}")
@@ -138,7 +140,7 @@ class PatchDataset(data.Dataset):
         #     self.labels_indices = torch.nonzero(self.labels).to(torch.int32)
         #     # print(f"Labels indices shape: {self.labels_indices.shape}")
         #     # print(f"Labels indices dtype: {self.labels_indices.dtype}")
-            
+
         #     # Indices where mask is 0 and labels is 1
         #     self.mask_0_labels_1_indices = torch.nonzero(
         #         (~_mask) & self.labels
@@ -170,9 +172,9 @@ class PatchDataset(data.Dataset):
 
         # Pre-allocate the patch
         patch = self.fragment[
-                :,
-                x: x + self.patch_size_x,
-                y: y + self.patch_size_y,
+            :,
+            x: x + self.patch_size_x,
+            y: y + self.patch_size_y,
         ]
         # print(f"Patch tensor shape: {patch.shape}")
         # print(f"Patch tensor dtype: {patch.dtype}")
@@ -190,13 +192,14 @@ class PatchDataset(data.Dataset):
             # If we're not training, we don't have labels
             return patch
 
-def get_device():
-    if torch.cuda.is_available():
-        print("Using GPU")
-        return torch.device("cuda")
-    else:
-        print("Using CPU")
-        return torch.device("cpu")
+
+def get_device(device: str = None):
+    if device == None or device == "gpu":
+        if torch.cuda.is_available():
+            print("Using GPU")
+            return torch.device("cuda")
+    print("Using CPU")
+    return torch.device("cpu")
 
 
 def image_to_rle(img, threshold=0.5):
@@ -209,6 +212,7 @@ def image_to_rle(img, threshold=0.5):
     ends_ix = np.where(ends)[0] + 2
     lengths = ends_ix - starts_ix
     return starts_ix, lengths
+
 
 def save_rle_as_image(rle_csv_path, output_dir, subtest_name, image_shape):
     with open(rle_csv_path, 'r') as csvfile:
@@ -230,7 +234,8 @@ def save_rle_as_image(rle_csv_path, output_dir, subtest_name, image_shape):
             # Reshape decoded image data to original shape
             img = img.reshape(image_shape)
             img = Image.fromarray(img * 255).convert('1')
-            _image_filepath = os.path.join(output_dir, f"pred_{subtest_name}_rle.png")
+            _image_filepath = os.path.join(
+                output_dir, f"pred_{subtest_name}_rle.png")
             img.save(_image_filepath)
 
 
@@ -248,8 +253,8 @@ def dice_score(preds, label, beta=0.5, epsilon=1e-6):
     # print(f"Label tensor dtype: {label.dtype}")
     # print(f"Label tensor min: {label.min()}")
     # print(f"Label tensor max: {label.max()}")
-    tp = preds[label==1].sum()
-    fp = preds[label==0].sum()
+    tp = preds[label == 1].sum()
+    fp = preds[label == 0].sum()
     fn = label.sum() - tp
     p = tp / (tp + fp + epsilon)
     r = tp / (tp + fn + epsilon)
@@ -273,12 +278,21 @@ def clear_gpu_memory():
         torch.cuda.empty_cache()
         gc.collect()
 
+
+def print_size_of_model(model: nn.Module):
+    """ Prints the real size of the model """
+    torch.save(model.state_dict(), "temp.p")
+    print('Model Size (MB):', os.path.getsize("temp.p")/1e6)
+    os.remove('temp.p')
+
+
 # Types of interpolation used in resizing
 INTERPOLATION_MODES = {
-        'bilinear': Image.BILINEAR,
-        'bicubic': Image.BICUBIC,
-        'nearest': Image.NEAREST,
+    'bilinear': Image.BILINEAR,
+    'bicubic': Image.BICUBIC,
+    'nearest': Image.NEAREST,
 }
+
 
 class ImageModel(nn.Module):
 
@@ -329,6 +343,7 @@ class ImageModel(nn.Module):
         x = self.head(x)
         return x
 
+
 class VideoModel(nn.Module):
 
     models = {
@@ -369,6 +384,7 @@ class VideoModel(nn.Module):
         x = self.head(x)
         return x
 
+
 def train(
     train_dir: str = "data/train/",
     model: str = "simplenet",
@@ -393,6 +409,7 @@ def train(
     max_time_hours: float = 8,
     writer: SummaryWriter = None,
     save_model: bool = True,
+    device: str = "gpu",
     **kwargs,
 ):
     # Notebook will only run for this amount of time
@@ -401,21 +418,21 @@ def train(
     time_start = time.time()
     time_elapsed = 0
 
-    # Get GPU 
-    device = get_device()
+    # Get GPU
+    device = get_device(device)
     clear_gpu_memory()
 
     # Load the model, try to fit on GPU
     if isinstance(model, str):
         if model in ["simplenet", "convnext_tiny", "convnext_small", "convnext_medium", "convnext_large", "resnext50_32x4d", "resnext101_32x8d", "resnext101_64x4d"]:
             model = ImageModel(
-                model = model,
+                model=model,
                 slice_depth=slice_depth,
                 freeze=freeze,
             )
         elif model in ["r2plus1d_18"]:
             model = VideoModel(
-                model = model,
+                model=model,
                 slice_depth=slice_depth,
                 freeze=freeze,
             )
@@ -432,9 +449,11 @@ def train(
 
     # Create optimizers
     if optimizer == "adam":
-        optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
+        optimizer = torch.optim.Adam(
+            model.parameters(), lr=lr, weight_decay=weight_decay)
     elif optimizer == "sgd":
-        optimizer = torch.optim.SGD(model.parameters(), lr=lr, weight_decay=weight_decay)
+        optimizer = torch.optim.SGD(
+            model.parameters(), lr=lr, weight_decay=weight_decay)
     loss_fn = nn.BCEWithLogitsLoss()
 
     # Scaler for mixed precision training
@@ -517,8 +536,9 @@ def train(
                 scaler.step(optimizer)
                 scaler.update()
 
-                _loader.set_postfix_str(f"Train.{current_dataset_id}.{loss_fn.__class__.__name__}: {loss.item():.4f}")
-                
+                _loader.set_postfix_str(
+                    f"Train.{current_dataset_id}.{loss_fn.__class__.__name__}: {loss.item():.4f}")
+
                 step += 1
                 with torch.no_grad():
                     train_loss += loss.item()
@@ -529,7 +549,7 @@ def train(
                 if time_elapsed > time_train_max_seconds:
                     print("Time limit exceeded, stopping batches")
                     break
-            
+
             if writer:
                 train_loss /= num_samples
                 writer.add_scalar(
@@ -544,7 +564,8 @@ def train(
                     print("Saving model...")
                     torch.save(model.state_dict(), f"{output_dir}/model.pth")
             if writer:
-                writer.add_scalar(f'Dice/{current_dataset_id}/train', score, step)
+                writer.add_scalar(
+                    f'Dice/{current_dataset_id}/train', score, step)
 
             # Check if we have exceeded the time limit
             time_elapsed = time.time() - time_start
@@ -557,15 +578,17 @@ def train(
             before_lr = optimizer.param_groups[0]["lr"]
             scheduler.step()
             after_lr = optimizer.param_groups[0]["lr"]
-            print("Epoch %d: SGD lr %.4f -> %.4f" % (epoch, before_lr, after_lr))
+            print("Epoch %d: SGD lr %.4f -> %.4f" %
+                  (epoch, before_lr, after_lr))
 
         # Check if we have exceeded the time limit
         time_elapsed = time.time() - time_start
         if time_elapsed > time_train_max_seconds:
             print("Time limit exceeded, stopping training")
             break
-        
+
     return best_score, model
+
 
 def eval(
     eval_dir: str = "data/test/",
@@ -585,23 +608,26 @@ def eval(
     threshold: float = 0.5,
     postproc_kernel: int = 3,
     writer: SummaryWriter = None,
+    quantize: bool = False,
+    device: str = "gpu",
     **kwargs,
 ):
-    # Get GPU 
-    device = get_device()
+    # Get GPU
+    device = get_device(device)
     clear_gpu_memory()
+    # device = torch.device('cpu')
 
     # Load the model, try to fit on GPU
     if isinstance(model, str):
         if model in ["simplenet", "convnext_tiny", "convnext_small", "convnext_medium", "convnext_large", "resnext50_32x4d", "resnext101_32x8d", "resnext101_64x4d"]:
             model = ImageModel(
-                model = model,
+                model=model,
                 slice_depth=slice_depth,
                 freeze=freeze,
             )
         elif model in ["r2plus1d_18"]:
             model = VideoModel(
-                model = model,
+                model=model,
                 slice_depth=slice_depth,
                 freeze=freeze,
             )
@@ -614,7 +640,14 @@ def eval(
                 map_location=device,
             ))
     model = model.to(device)
-    model.eval()
+    model = model.eval()
+    print_size_of_model(model)
+
+    if quantize:
+        model.qconfig = quantization.get_default_qconfig('fbgemm')
+        quantization.prepare(model, inplace=True)
+        quantization.convert(model, inplace=True)
+        print_size_of_model(model)
 
     if save_submit_csv:
         submission_filepath = os.path.join(output_dir, 'submission.csv')
@@ -659,14 +692,15 @@ def eval(
 
         # Make a blank prediction image
         pred_image = np.zeros(eval_dataset.resized_size, dtype=np.float32).T
-        print(f"Prediction image {subtest_name} shape: {pred_image.shape}")
-        print(f"Prediction image min: {pred_image.min()}, max: {pred_image.max()}")
+        print(f"Pred image {subtest_name} shape: {pred_image.shape}")
+        print(f"Pred image min: {pred_image.min()}, max: {pred_image.max()}")
 
         # score = 0
         for i, patch in enumerate(tqdm(eval_dataloader, postfix=f"Eval {subtest_name}")):
             patch = patch.to(device)
+            patch = img_transforms(patch)
             with torch.no_grad():
-                preds = model(img_transforms(patch))
+                preds = model(patch)
                 preds = torch.sigmoid(preds)
                 # score += dice_score(pred, label)
 
@@ -683,7 +717,8 @@ def eval(
         if writer is not None:
             print("Writing prediction image to TensorBoard...")
             # Add batch dimmension to pred_image for Tensorboard
-            writer.add_image(f'pred_{subtest_name}', np.expand_dims(pred_image, axis=0))
+            writer.add_image(f'pred_{subtest_name}',
+                             np.expand_dims(pred_image, axis=0))
 
         # Resize pred_image to original size
         img = Image.fromarray(pred_image * 255).convert('1')
@@ -694,29 +729,34 @@ def eval(
 
         if save_pred_img:
             print("Saving prediction image...")
-            _image_filepath = os.path.join(output_dir, f"pred_{subtest_name}.png")
+            _image_filepath = os.path.join(
+                output_dir, f"pred_{subtest_name}.png")
             img.save(_image_filepath)
 
         if postproc_kernel is not None:
             print("Postprocessing...")
-            # Erosion then Dilation 
+            # Erosion then Dilation
             img = img.filter(ImageFilter.MinFilter(postproc_kernel))
             img = img.filter(ImageFilter.MaxFilter(postproc_kernel))
 
         if save_pred_img:
             print("Saving prediction image...")
-            _image_filepath = os.path.join(output_dir, f"pred_{subtest_name}_post.png")
+            _image_filepath = os.path.join(
+                output_dir, f"pred_{subtest_name}_post.png")
             img.save(_image_filepath)
 
         if save_submit_csv:
             print("Saving submission csv...")
-            starts_ix, lengths = image_to_rle(np.array(img), threshold=threshold)
-            inklabels_rle = " ".join(map(str, sum(zip(starts_ix, lengths), ())))
+            starts_ix, lengths = image_to_rle(
+                np.array(img), threshold=threshold)
+            inklabels_rle = " ".join(
+                map(str, sum(zip(starts_ix, lengths), ())))
             with open(submission_filepath, 'a') as f:
                 f.write(f"{subtest_name},{inklabels_rle}\n")
 
     if save_pred_img and save_submit_csv:
-        save_rle_as_image(submission_filepath, output_dir, subtest_name, pred_image.shape)
+        save_rle_as_image(submission_filepath, output_dir,
+                          subtest_name, pred_image.shape)
 
 
 def eval_from_episode_dir(
@@ -724,23 +764,25 @@ def eval_from_episode_dir(
     output_dir: str = None,
     hparams_filename: str = 'hparams.yaml',
     weights_filename: str = 'model.pth',
+    **kwargs,
 ):
     # Get hyperparams from text file
     _hparams_filepath = os.path.join(episode_dir, hparams_filename)
     with open(_hparams_filepath, 'r') as f:
         hparams = yaml.load(f, Loader=yaml.FullLoader)
-    print(f"Hyperparams:\n{pprint.pformat(hparams)}\n")
     hparams['output_dir'] = output_dir
     _weights_filepath = os.path.join(episode_dir, weights_filename)
+    # Merge kwargs with hparams, kwargs takes precedence
+    hparams = {**hparams, **kwargs}
+    print(f"Hyperparams:\n{pprint.pformat(hparams)}\n")
     eval(
+        weights_filepath=_weights_filepath,
         **hparams,
-        weights_filepath = _weights_filepath,
     )
 
 
-
 def sweep_episode(hparams) -> float:
-    
+
     # Print hyperparam dict with logging
     print(f"\n\nHyperparams:\n\n{pprint.pformat(hparams)}\n\n")
 
@@ -759,13 +801,13 @@ def sweep_episode(hparams) -> float:
     # Save hyperparams to file with YAML
     with open(os.path.join(hparams['output_dir'], 'hparams.yaml'), 'w') as f:
         yaml.dump(hparams, f)
-    
+
     try:
         writer = SummaryWriter(log_dir=hparams['output_dir'])
         # Train and evaluate a TFLite model
         score, model = train(
             **hparams,
-            writer = writer,
+            writer=writer,
         )
         writer.add_hparams(hparams, {'dice_score': score})
         del hparams['model']

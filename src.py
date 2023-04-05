@@ -3,8 +3,7 @@ import gc
 import os
 import subprocess
 import time
-from typing import Union
-import shutil
+from typing import Union, Dict
 
 import numpy as np
 import PIL.Image as Image
@@ -304,6 +303,10 @@ class ImageModel(nn.Module):
         'resnext50_32x4d': (models.resnext50_32x4d, models.ResNeXt50_32X4D_Weights.DEFAULT),
         'resnext101_32x8d': (models.resnext101_32x8d, models.ResNeXt101_32X8D_Weights.DEFAULT),
         'resnext101_64x4d': (models.resnext101_64x4d, models.ResNeXt101_64X4D_Weights.DEFAULT),
+        'vit_b_16': (models.vit_b_16, models.ViT_B_16_Weights.DEFAULT),
+        'vit_b_32': (models.vit_b_32, models.ViT_B_32_Weights.DEFAULT),
+        'vit_l_32': (models.vit_l_32, models.ViT_L_32_Weights.DEFAULT),
+        'vit_h_14': (models.vit_h_14, models.ViT_H_14_Weights.DEFAULT),
     }
 
     def __init__(
@@ -339,47 +342,6 @@ class ImageModel(nn.Module):
 
     def forward(self, x):
         x = self.channel_reduce(x)
-        x = self.model(x)
-        x = self.head(x)
-        return x
-
-
-class VideoModel(nn.Module):
-
-    models = {
-        'r2plus1d_18': (models.video.r2plus1d_18, models.video.R2Plus1D_18_Weights.DEFAULT),
-        # 'swin3d_b': (models.video.swin3d_b, models.video.Swin3D_B_Weights.DEFAULT),
-        # 'mvit_v2_s': (models.video.mvit_v2_s, models.video.MViT_V2_S_Weights.DEFAULT),
-    }
-
-    def __init__(
-        self,
-        slice_depth: int = 65,
-        model: str = 'r2plus1d_18',
-        load_fresh: bool = False,
-        freeze: bool = False,
-    ):
-        super().__init__()
-        print(f"Initializing new model: {model}")
-        assert model in self.models, f"Model {model} not supported"
-        _f, weights = self.models[model]
-        # Optionally load fresh pre-trained model from scratch
-        self.model = _f(weights=weights if load_fresh else None)
-        # Put model in training mode
-        if freeze:
-            self.model.eval()
-        else:
-            self.model.train()
-        # Binary classification head on top
-        self.head = nn.Sequential(
-            nn.BatchNorm1d(400),
-            nn.ReLU(),
-            nn.Dropout(0.2),
-            nn.Linear(400, 1),
-        )
-
-    def forward(self, x):
-        x = x.view(x.shape[0], -1, 3, x.shape[-2], x.shape[-1])
         x = self.model(x)
         x = self.head(x)
         return x
@@ -424,20 +386,11 @@ def train(
 
     # Load the model, try to fit on GPU
     if isinstance(model, str):
-        if model in ["simplenet", "convnext_tiny", "convnext_small", "convnext_medium", "convnext_large", "resnext50_32x4d", "resnext101_32x8d", "resnext101_64x4d"]:
-            model = ImageModel(
-                model=model,
-                slice_depth=slice_depth,
-                freeze=freeze,
-            )
-        elif model in ["r2plus1d_18"]:
-            model = VideoModel(
-                model=model,
-                slice_depth=slice_depth,
-                freeze=freeze,
-            )
-        else:
-            raise ValueError(f"Model {model} not supported")
+        model = ImageModel(
+            model=model,
+            slice_depth=slice_depth,
+            freeze=freeze,
+        )
         if weights_filepath is not None:
             print(f"Loading weights from {weights_filepath}")
             model.load_state_dict(torch.load(
@@ -587,7 +540,147 @@ def train(
             print("Time limit exceeded, stopping training")
             break
 
-    return best_score, model
+    return model
+
+
+def valid(
+    valid_dir: str = "data/test/",
+    weights_filepath: str = None,
+    model: Union[str, nn.Module] = "convnext_tiny",
+    output_dir: str = "output",
+    slice_depth: int = 3,
+    patch_size_x: int = 512,
+    patch_size_y: int = 128,
+    resize_ratio: float = 1.0,
+    interpolation: str = "bilinear",
+    freeze: bool = False,
+    batch_size: int = 16,
+    num_workers: int = 1,
+    save_pred_img: bool = True,
+    postproc_kernel: int = 3,
+    writer: SummaryWriter = None,
+    device: str = "gpu",
+    **kwargs,
+):
+    # Get GPU
+    device = get_device(device)
+    clear_gpu_memory()
+
+    # Load the model, try to fit on GPU
+    if isinstance(model, str):
+        model = ImageModel(
+            model=model,
+            slice_depth=slice_depth,
+            freeze=freeze,
+        )
+        if weights_filepath is not None:
+            print(f"Loading weights from {weights_filepath}")
+            model.load_state_dict(torch.load(
+                weights_filepath,
+                map_location=device,
+            ))
+    model = model.to(device)
+    model = model.eval()
+    print_size_of_model(model)
+
+    best_score_dict: Dict[str, float] = {}
+    for subtest_name in os.listdir(valid_dir):
+        score_name = f'Dice/{subtest_name}/valid'
+        if score_name not in best_score_dict:
+            best_score_dict[score_name] = 0
+
+        # Name of sub-directory inside test dir
+        subtest_filepath = os.path.join(valid_dir, subtest_name)
+
+        # Evaluation dataset
+        valid_dataset = PatchDataset(
+            # Directory containing the dataset
+            subtest_filepath,
+            # Expected slices per fragment
+            slice_depth=slice_depth,
+            # Size of an individual patch
+            patch_size_x=patch_size_x,
+            patch_size_y=patch_size_y,
+            # Image resize ratio
+            resize_ratio=resize_ratio,
+            interpolation=interpolation,
+            # Training vs Testing mode
+            train=True,
+        )
+        img_transforms = transforms.Compose([
+            transforms.Normalize(valid_dataset.mean, valid_dataset.std),
+        ])
+
+        # DataLoaders
+        valid_dataloader = DataLoader(
+            valid_dataset,
+            batch_size=batch_size,
+            sampler=SequentialSampler(valid_dataset),
+            num_workers=num_workers,
+            # This will make it go faster if it is loaded into a GPU
+            pin_memory=True,
+        )
+
+        # Make a blank prediction image
+        pred_image = np.zeros(valid_dataset.resized_size, dtype=np.float32).T
+        print(f"Pred image {subtest_name} shape: {pred_image.shape}")
+        print(f"Pred image min: {pred_image.min()}, max: {pred_image.max()}")
+
+        score = 0
+        for i, (patch, label) in enumerate(tqdm(valid_dataloader, postfix=f"Valid {subtest_name}")):
+            patch = patch.to(device)
+            patch = img_transforms(patch)
+            with torch.no_grad():
+                preds = model(patch)
+                preds = torch.sigmoid(preds)
+                score += dice_score(preds, label).item()
+
+            # Iterate through each image and prediction in the batch
+            for j, pred in enumerate(preds):
+                pixel_index = valid_dataset.mask_indices[i * batch_size + j]
+                pred_image[pixel_index[0], pixel_index[1]] = pred
+
+        # Score is average dice score for all batches
+        score /= len(valid_dataloader)
+        if writer:
+            writer.add_scalar(score_name, score)
+
+        # Overwrite best score if it is better
+        if score_name not in best_score_dict or score > best_score_dict[score_name]:
+            best_score_dict[score_name] = score
+
+        if writer is not None:
+            print("Writing prediction image to TensorBoard...")
+            # Add batch dimmension to pred_image for Tensorboard
+            writer.add_image(f'pred_{subtest_name}',
+                             np.expand_dims(pred_image, axis=0))
+
+        # Resize pred_image to original size
+        img = Image.fromarray(pred_image * 255).convert('1')
+        img = img.resize((
+            valid_dataset.original_size[0],
+            valid_dataset.original_size[1],
+        ), resample=INTERPOLATION_MODES[interpolation])
+
+        if save_pred_img:
+            print("Saving prediction image...")
+            _image_filepath = os.path.join(
+                output_dir, f"pred_{subtest_name}.png")
+            img.save(_image_filepath)
+
+        if postproc_kernel is not None:
+            print("Postprocessing...")
+            # Erosion then Dilation
+            img = img.filter(ImageFilter.MinFilter(postproc_kernel))
+            img = img.filter(ImageFilter.MaxFilter(postproc_kernel))
+
+        if save_pred_img:
+            print("Saving prediction image...")
+            _image_filepath = os.path.join(
+                output_dir, f"pred_{subtest_name}_post.png")
+            img.save(_image_filepath)
+
+    return best_score_dict
 
 
 def eval(
@@ -615,24 +708,14 @@ def eval(
     # Get GPU
     device = get_device(device)
     clear_gpu_memory()
-    # device = torch.device('cpu')
 
     # Load the model, try to fit on GPU
     if isinstance(model, str):
-        if model in ["simplenet", "convnext_tiny", "convnext_small", "convnext_medium", "convnext_large", "resnext50_32x4d", "resnext101_32x8d", "resnext101_64x4d"]:
-            model = ImageModel(
-                model=model,
-                slice_depth=slice_depth,
-                freeze=freeze,
-            )
-        elif model in ["r2plus1d_18"]:
-            model = VideoModel(
-                model=model,
-                slice_depth=slice_depth,
-                freeze=freeze,
-            )
-        else:
-            raise ValueError(f"Model {model} not supported")
+        model = ImageModel(
+            model=model,
+            slice_depth=slice_depth,
+            freeze=freeze,
+        )
         if weights_filepath is not None:
             print(f"Loading weights from {weights_filepath}")
             model.load_state_dict(torch.load(
@@ -805,19 +888,21 @@ def sweep_episode(hparams) -> float:
     try:
         writer = SummaryWriter(log_dir=hparams['output_dir'])
         # Train and evaluate a TFLite model
-        score, model = train(
+        model = train(
             **hparams,
             writer=writer,
         )
-        writer.add_hparams(hparams, {'dice_score': score})
         del hparams['model']
         # Eval takes a while, make sure you actually want to do this.
-        eval(
+        score_dict = valid(
             **hparams,
             model=model,
             writer=writer,
         )
+        writer.add_hparams(hparams, score_dict)
         writer.close()
+        # Score is average of all scores
+        score = sum(score_dict.values()) / len(score_dict)
     except Exception as e:
         print(f"\n\n Model Training FAILED with \n{e}\n\n")
         score = 0

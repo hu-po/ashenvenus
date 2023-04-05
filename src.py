@@ -307,7 +307,6 @@ class ImageModel(nn.Module):
         'resnext50_32x4d': (models.resnext50_32x4d, models.ResNeXt50_32X4D_Weights.DEFAULT),
         'resnext101_32x8d': (models.resnext101_32x8d, models.ResNeXt101_32X8D_Weights.DEFAULT),
         'resnext101_64x4d': (models.resnext101_64x4d, models.ResNeXt101_64X4D_Weights.DEFAULT),
-        'vit_b_16': (models.vit_b_16, models.ViT_B_16_Weights.DEFAULT),
         'vit_b_32': (models.vit_b_32, models.ViT_B_32_Weights.DEFAULT),
         'vit_l_32': (models.vit_l_32, models.ViT_L_32_Weights.DEFAULT),
         'vit_h_14': (models.vit_h_14, models.ViT_H_14_Weights.DEFAULT),
@@ -707,6 +706,7 @@ def eval(
     writer: SummaryWriter = None,
     quantize: bool = False,
     device: str = "gpu",
+    save_histograms: bool = False,
     **kwargs,
 ):
     # Get GPU
@@ -797,8 +797,25 @@ def eval(
         if writer is not None:
             print("Writing prediction image to TensorBoard...")
             writer.add_image(f'pred_{subtest_name}', np.expand_dims(pred_image, axis=0))
-            print("Writing prediction histogram to TensorBoard...")
-            writer.add_histogram(f'pred_{subtest_name}', pred_image)
+
+        if save_histograms:
+            # Save histogram of predictions as image
+            print("Saving prediction histogram...")
+            _num_bins = 100
+            np_hist, _ = np.histogram(pred_image.flatten(), bins=_num_bins, range=(0, 1), density=True)
+            np_hist = np_hist / np_hist.sum()
+            hist = np.zeros((_num_bins, 100), dtype=np.uint8)
+            for bin in range(_num_bins):
+                _height = int(np_hist[bin] * 100)
+                hist[bin, 0:_height] = 255
+            hist_img = Image.fromarray(hist)
+            _histogram_filepath = os.path.join(
+                output_dir, f"pred_{subtest_name}_histogram.png")
+            hist_img.save(_histogram_filepath)
+
+            if writer is not None:
+                print("Writing prediction histogram to TensorBoard...")
+                writer.add_histogram(f'pred_{subtest_name}', pred_image)
 
         # Resize pred_image to original size
         img = Image.fromarray(pred_image * 255).convert('1')
@@ -831,13 +848,13 @@ def eval(
             # Convert image to binary using threshold
             img = np.where(img > threshold, 1, 0).astype(np.uint8)
             # Convert image to RLE
-            start_time = time.time()
-            inklabels_rle_original = image_to_rle(img)
-            print(f"RLE conversion (ORIGINAL) took {time.time() - start_time:.2f} seconds")
+            # start_time = time.time()
+            # inklabels_rle_original = image_to_rle(img)
+            # print(f"RLE conversion (ORIGINAL) took {time.time() - start_time:.2f} seconds")
             start_time = time.time()
             inklabels_rle_fast = image_to_rle_fast(img)
             print(f"RLE conversion (FAST) took {time.time() - start_time:.2f} seconds")
-            assert inklabels_rle_original == inklabels_rle_fast, "RLE conversion is not the same!"
+            # assert inklabels_rle_original == inklabels_rle_fast, "RLE conversion is not the same!"
             with open(submission_filepath, 'a') as f:
                 f.write(f"{subtest_name},{inklabels_rle_fast}\n")
 

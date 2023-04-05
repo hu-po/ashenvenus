@@ -1,6 +1,10 @@
 """
     Split dataset into Train and Validation, by cutting 
     the image into a top half and bottom half.
+
+scp -r C:\Users\ook\Documents\dev\ashenvenus\data\split* tren@192.168.1.30:/home/tren/dev/ashenvenus/data/ 
+scp -r C:\Users\ook\Documents\dev\ashenvenus\data\split* oop@192.168.1.34:/home/oop/dev/ashenvenus/data/ 
+
 """
 
 import os
@@ -10,13 +14,17 @@ from tqdm import tqdm
 image_mask_filename='mask.png'
 image_labels_filename='inklabels.png'
 slices_dir_filename='surface_volume'
+
 num_slices = 65
+split = 0.85
 
-target_dir = '/home/tren/dev/ashenvenus/data/train'
-output_dir_train = '/home/tren/dev/ashenvenus/data/split_train'
-output_dir_valid = '/home/tren/dev/ashenvenus/data/split_valid'
+# target_dir = '/home/tren/dev/ashenvenus/data/train'
+# output_dir_train = '/home/tren/dev/ashenvenus/data/split_train'
+# output_dir_valid = '/home/tren/dev/ashenvenus/data/split_valid'
 
-split = 0.9
+target_dir = "C:\\Users\\ook\\Documents\\dev\\ashenvenus\\data\\train"
+output_dir_train = "C:\\Users\\ook\\Documents\\dev\\ashenvenus\\data\\split_train"
+output_dir_valid = "C:\\Users\\ook\\Documents\\dev\\ashenvenus\\data\\split_valid"
 
 # Baseline is to use image mask to create guess submission
 for dataset in os.listdir(target_dir):
@@ -61,7 +69,7 @@ for dataset in os.listdir(target_dir):
 
     for i in tqdm(range(num_slices), postfix='converting slices'):
         _slice_filepath = os.path.join(_slice_dir, f"{i:02d}.tif")
-        _slice_img = Image.open(_slice_filepath).convert('F')
+        _slice_img = Image.open(_slice_filepath)
 
         # Split into train and val
         width, height = _slice_img.size

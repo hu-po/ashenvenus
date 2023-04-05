@@ -17,24 +17,24 @@ search_space = {
     'valid_dir': 'data/split_valid',
     'curriculum': hp.choice('curriculum', [
         # All 3 performs better, order doesn't seem to matter
-        # '1',
-        # '2',
-        # '3',
-        # '13',
+        '1',
+        '2',
+        '3',
+        '13',
         '32',
         '123',
         # '321',
     ]),
     'model': hp.choice('model', [
         # 'convnext_tiny',
-        # 'convnext_small',
-        # 'convnext_base',
-        'convnext_large',
-        # 'resnext50_32x4d',
-        'resnext101_32x8d',
-        'resnext101_64x4d',
+        'convnext_small',
+        'convnext_base',
+        # 'convnext_large',
+        'resnext50_32x4d',
+        # 'resnext101_32x8d',
+        # 'resnext101_64x4d',
         'vit_b_16',
-        'vit_b_32',
+        # 'vit_b_32',
         # 'vit_l_32',
         # 'vit_h_14',
     ]),
@@ -45,7 +45,7 @@ search_space = {
     ]),
     'image_augs': hp.choice('image_augs', [
         # Hurts a little more than helps, but doesn't matter much
-        # True,
+        True,
         False,
     ]),
     'optimizer': hp.choice('optimizer', [
@@ -70,6 +70,7 @@ search_space = {
     'num_workers': 0,
     'resize_ratio': hp.choice('resize_ratio', [
         0.02,
+        0.04,
         0.08,
         # 0.1,
         # 0.2,
@@ -90,12 +91,12 @@ search_space = {
         # Larger is better, strongest predictor of score
         # 200000,
         # 80000,
-        # 40000,
+        40000,
         20000,
         # 8000,
     ]),
     'max_time_hours': hp.choice('max_time_hours', [
-        # 1,
+        4,
         8,
     ]),
     'threshold': hp.choice('threshold', [0.5]),

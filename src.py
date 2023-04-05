@@ -1,30 +1,28 @@
 import csv
 import gc
 import os
+import pprint
 import subprocess
 import time
-from typing import Union, Dict
+import uuid
+from io import StringIO
+from typing import Dict, Union
 
+import matplotlib.pyplot as plt
 import numpy as np
 import PIL.Image as Image
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim.lr_scheduler as lr_scheduler
+import torch.quantization as quantization
 import torch.utils.data as data
 import yaml
 from PIL import Image, ImageFilter
 from tensorboardX import SummaryWriter
 from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
-from torchvision import transforms, models
-import torch.quantization as quantization
+from torchvision import models, transforms
 from tqdm import tqdm
-import os
-import pprint
-import uuid
-
-import numpy as np
-import yaml
 
 
 class PatchDataset(data.Dataset):
@@ -201,16 +199,22 @@ def get_device(device: str = None):
     return torch.device("cpu")
 
 
-def image_to_rle(img, threshold=0.5):
-    # TODO: Histogram of image to see where threshold should be
-    flat_img = img.flatten()
-    flat_img = np.where(flat_img > threshold, 1, 0).astype(np.uint8)
-    starts = np.array((flat_img[:-1] == 0) & (flat_img[1:] == 1))
-    ends = np.array((flat_img[:-1] == 1) & (flat_img[1:] == 0))
+def image_to_rle(img):
+    starts = np.array((img[:-1] == 0) & (img[1:] == 1))
+    ends = np.array((img[:-1] == 1) & (img[1:] == 0))
     starts_ix = np.where(starts)[0] + 2
     ends_ix = np.where(ends)[0] + 2
     lengths = ends_ix - starts_ix
-    return starts_ix, lengths
+    return " ".join(map(str, sum(zip(starts_ix, lengths), ())))
+
+def image_to_rle_fast(img):
+    img[0] = 0
+    img[-1] = 0
+    runs = np.where(img[1:] != img[:-1])[0] + 2
+    runs[1::2] = runs[1::2] - runs[:-1:2]
+    f = StringIO()
+    np.savetxt(f, runs.reshape(1, -1), delimiter=" ", fmt="%d")
+    return f.getvalue().strip()
 
 
 def save_rle_as_image(rle_csv_path, output_dir, subtest_name, image_shape):
@@ -778,30 +782,23 @@ def eval(
         print(f"Pred image {subtest_name} shape: {pred_image.shape}")
         print(f"Pred image min: {pred_image.min()}, max: {pred_image.max()}")
 
-        # score = 0
         for i, patch in enumerate(tqdm(eval_dataloader, postfix=f"Eval {subtest_name}")):
             patch = patch.to(device)
             patch = img_transforms(patch)
             with torch.no_grad():
                 preds = model(patch)
                 preds = torch.sigmoid(preds)
-                # score += dice_score(pred, label)
 
             # Iterate through each image and prediction in the batch
             for j, pred in enumerate(preds):
                 pixel_index = eval_dataset.mask_indices[i * batch_size + j]
                 pred_image[pixel_index[0], pixel_index[1]] = pred
 
-        # # Score is average dice score for all batches
-        # score /= len(eval_dataloader)
-        # if writer:
-        #     writer.add_scalar(f'Dice/{subtest_name}/eval', score)
-
         if writer is not None:
             print("Writing prediction image to TensorBoard...")
-            # Add batch dimmension to pred_image for Tensorboard
-            writer.add_image(f'pred_{subtest_name}',
-                             np.expand_dims(pred_image, axis=0))
+            writer.add_image(f'pred_{subtest_name}', np.expand_dims(pred_image, axis=0))
+            print("Writing prediction histogram to TensorBoard...")
+            writer.add_histogram(f'pred_{subtest_name}', pred_image)
 
         # Resize pred_image to original size
         img = Image.fromarray(pred_image * 255).convert('1')
@@ -830,12 +827,19 @@ def eval(
 
         if save_submit_csv:
             print("Saving submission csv...")
-            starts_ix, lengths = image_to_rle(
-                np.array(img), threshold=threshold)
-            inklabels_rle = " ".join(
-                map(str, sum(zip(starts_ix, lengths), ())))
+            img = np.array(img).flatten()
+            # Convert image to binary using threshold
+            img = np.where(img > threshold, 1, 0).astype(np.uint8)
+            # Convert image to RLE
+            start_time = time.time()
+            inklabels_rle_original = image_to_rle(img)
+            print(f"RLE conversion (ORIGINAL) took {time.time() - start_time:.2f} seconds")
+            start_time = time.time()
+            inklabels_rle_fast = image_to_rle_fast(img)
+            print(f"RLE conversion (FAST) took {time.time() - start_time:.2f} seconds")
+            assert inklabels_rle_original == inklabels_rle_fast, "RLE conversion is not the same!"
             with open(submission_filepath, 'a') as f:
-                f.write(f"{subtest_name},{inklabels_rle}\n")
+                f.write(f"{subtest_name},{inklabels_rle_fast}\n")
 
     if save_pred_img and save_submit_csv:
         save_rle_as_image(submission_filepath, output_dir,

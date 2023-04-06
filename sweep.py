@@ -69,6 +69,7 @@ search_space = {
     'num_workers': 0,
     'resize_ratio': hp.choice('resize_ratio', [
         # Below 0.1 it can't learn
+        # Above 0.3 it takes hours to perform eval
         0.2,
     ]),
     'interpolation': hp.choice('interpolation', [

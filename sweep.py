@@ -87,7 +87,7 @@ search_space = {
     ]),
     # Careful with small learning rates, less than 1e-5 is too small
     'lr': hp.loguniform('lr',np.log(0.00001), np.log(0.01)),
-    'num_epochs': hp.choice('num_epochs', [8]),
+    'num_epochs': hp.choice('num_epochs', [6]),
     'num_samples_train': hp.choice('num_samples_train', [
         # Larger is better, strongest predictor of score
         120000,
@@ -101,8 +101,8 @@ search_space = {
         4000
     ]),
     'max_time_hours': hp.choice('max_time_hours', [
-        # 4,
-        9,
+        8,
+        # 9,
     ]),
     'threshold': hp.choice('threshold', [0.5]),
     'postproc_kernel': hp.choice('postproc_kernel', [3]),

@@ -83,14 +83,14 @@ search_space = {
         # '224.224.65',
         '32.32.65',
         '64.64.65',
-        '128.64.65',
+        # '128.64.65',
     ]),
     # Careful with small learning rates, less than 1e-5 is too small
     'lr': hp.loguniform('lr',np.log(0.00001), np.log(0.01)),
-    'num_epochs': hp.choice('num_epochs', [6]),
+    'num_epochs': hp.choice('num_epochs', [8]),
     'num_samples_train': hp.choice('num_samples_train', [
         # Larger is better, strongest predictor of score
-        120000,
+        200000,
         # 120000,
         # 60000,
         # 4000,

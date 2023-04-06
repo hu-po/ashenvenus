@@ -18,11 +18,11 @@ search_space = {
     'valid_dir': 'data/split_valid',
     'curriculum': hp.choice('curriculum', [
         # All 3 performs better, order doesn't seem to matter
-        '1',
-        '2',
-        '3',
-        '13',
-        '32',
+        # '1',
+        # '2',
+        # '3',
+        # '13',
+        # '32',
         '123',
         # '321',
     ]),
@@ -34,7 +34,8 @@ search_space = {
         'resnext50_32x4d',
         # 'resnext101_32x8d',
         # 'resnext101_64x4d',
-        'vit_b_32',
+        # ViTs are picky about input size
+        # 'vit_b_32', 
         # 'vit_l_32',
         # 'vit_h_14',
     ]),
@@ -44,20 +45,18 @@ search_space = {
         # False,
     ]),
     'image_augs': hp.choice('image_augs', [
-        # Hurts a little more than helps, but doesn't matter much
+        # Sweep 060423 - Mostly helps a little
+        # Sweep 040423 - Hurts a little more than helps, but doesn't matter much
         True,
-        False,
+        # False,
     ]),
     'optimizer': hp.choice('optimizer', [
         'adam',
         # 'sgd', # Garbo
     ]),
     'weight_decay': hp.choice('weight_decay', [
-        0,
-        1e-5,
-        5e-5,
+        # Hard to tell, good runs exist with and without
         1e-4,
-        5e-4,
         1e-3,
     ]),
     'lr_gamma': hp.choice('lr_gamma', [
@@ -73,31 +72,36 @@ search_space = {
         0.2,
     ]),
     'interpolation': hp.choice('interpolation', [
+        # Bicubic is best, but nearest is faster
+        # 'nearest',
         'bilinear',
         'bicubic',
-        'nearest',
     ]),
     'input_size': hp.choice('input_size', [
-        '224.224.65',
-        '68.68.65',
+        # Smaller resolutions actually work quite well
+        # '224.224.65',
+        '32.32.65',
+        '64.64.65',
+        '128.64.65',
     ]),
-    'lr': hp.loguniform('lr',  np.log(0.0000001), np.log(0.001)),
-    'num_epochs': hp.choice('num_epochs', [16]),
+    # Careful with small learning rates, less than 1e-5 is too small
+    'lr': hp.loguniform('lr',np.log(0.00001), np.log(0.01)),
+    'num_epochs': hp.choice('num_epochs', [8]),
     'num_samples_train': hp.choice('num_samples_train', [
         # Larger is better, strongest predictor of score
-        # 200000,
+        120000,
         # 120000,
         # 60000,
-        4000,
-        2000,
+        # 4000,
+        # 2000,
     ]),
     'num_samples_valid': hp.choice('num_samples_valid', [
         # Larger is more thorough, but takes more time
-        1000
+        4000
     ]),
     'max_time_hours': hp.choice('max_time_hours', [
-        4,
-        8,
+        # 4,
+        9,
     ]),
     'threshold': hp.choice('threshold', [0.5]),
     'postproc_kernel': hp.choice('postproc_kernel', [3]),

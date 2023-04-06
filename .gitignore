@@ -3,6 +3,7 @@ data/
 train/
 test/
 output*
+sweep_*
 
 # Model images
 model_graph*

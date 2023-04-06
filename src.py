@@ -350,15 +350,17 @@ class ImageModel(nn.Module):
         return x
 
 
-def train(
+def train_valid(
     train_dir: str = "data/train/",
+    valid_dir: str = "data/valid/",
     model: str = "simplenet",
     freeze: bool = False,
     weights_filepath: str = None,
     optimizer: str = "adam",
     weight_decay: float = 0.,
     curriculum: str = "1",
-    num_samples: int = 100,
+    num_samples_train: int = 100,
+    num_samples_valid: int = 100,
     num_workers: int = 1,
     output_dir: str = "output/train",
     image_augs: bool = False,
@@ -423,21 +425,21 @@ def train(
         writer = SummaryWriter(output_dir)
 
     # Train the model
-    best_score = 0
     step = 0
+    best_score_dict: Dict[str, float] = {}
     for epoch in range(num_epochs):
         print(f"Epoch: {epoch}")
 
         # Curriculum defines the order of the training
-        for current_dataset_id in curriculum:
+        for train_dataset_id in curriculum:
 
-            _train_dir = os.path.join(train_dir, current_dataset_id)
-            print(f"Training on dataset: {_train_dir}")
+            train_dataset_filepath = os.path.join(train_dir, train_dataset_id)
+            print(f"Training on dataset: {train_dataset_filepath}")
 
             # Training dataset
             train_dataset = PatchDataset(
                 # Directory containing the dataset
-                _train_dir,
+                train_dataset_filepath,
                 # Expected slices per fragment
                 slice_depth=slice_depth,
                 # Size of an individual patch
@@ -469,7 +471,7 @@ def train(
                 train_dataset,
                 batch_size=batch_size,
                 sampler=RandomSampler(
-                    train_dataset, num_samples=num_samples),
+                    train_dataset, num_samples=num_samples_train),
                 num_workers=num_workers,
                 # This will make it go faster if it is loaded into a GPU
                 pin_memory=True,
@@ -477,8 +479,8 @@ def train(
 
             print(f"Training...")
             train_loss = 0
-            score = 0
             _loader = tqdm(train_dataloader)
+            score = 0
             for patch, label in _loader:
                 # writer.add_histogram('patch_input', patch, step)
                 # writer.add_histogram('label_input', label, step)
@@ -493,7 +495,7 @@ def train(
                 scaler.update()
 
                 _loader.set_postfix_str(
-                    f"Train.{current_dataset_id}.{loss_fn.__class__.__name__}: {loss.item():.4f}")
+                    f"Train.{train_dataset_id}.{loss_fn.__class__.__name__}: {loss.item():.4f}")
 
                 step += 1
                 with torch.no_grad():
@@ -507,21 +509,15 @@ def train(
                     break
 
             if writer:
-                train_loss /= num_samples
+                train_loss /= num_samples_train
                 writer.add_scalar(
-                    f'{loss_fn.__class__.__name__}/{current_dataset_id}/train', train_loss, step)
+                    f'{loss_fn.__class__.__name__}/{train_dataset_id}/train', train_loss, step)
 
             # Score is average dice score for all batches
             score /= len(train_dataloader)
-            if score > best_score:
-                print("New best score: %.4f" % score)
-                best_score = score
-                if save_model:
-                    print("Saving model...")
-                    torch.save(model.state_dict(), f"{output_dir}/model.pth")
             if writer:
                 writer.add_scalar(
-                    f'Dice/{current_dataset_id}/train', score, step)
+                    f'dice.{train_dataset_id}.train', score, step)
 
             # Check if we have exceeded the time limit
             time_elapsed = time.time() - time_start
@@ -543,147 +539,87 @@ def train(
             print("Time limit exceeded, stopping training")
             break
 
-    return model
+        # Validate
+        for valid_dataset_id in os.listdir(valid_dir):
+            score_name = f'dice.{valid_dataset_id}.valid'
+            if score_name not in best_score_dict:
+                best_score_dict[score_name] = 0
 
+            # Name of sub-directory inside test dir
+            valid_dataset_filepath = os.path.join(valid_dir, valid_dataset_id)
 
-def valid(
-    valid_dir: str = "data/test/",
-    weights_filepath: str = None,
-    model: Union[str, nn.Module] = "convnext_tiny",
-    output_dir: str = "output",
-    slice_depth: int = 3,
-    patch_size_x: int = 512,
-    patch_size_y: int = 128,
-    resize_ratio: float = 1.0,
-    interpolation: str = "bilinear",
-    freeze: bool = False,
-    batch_size: int = 16,
-    num_workers: int = 1,
-    save_pred_img: bool = True,
-    postproc_kernel: int = 3,
-    writer: SummaryWriter = None,
-    device: str = "gpu",
-    **kwargs,
-):
-    # Get GPU
-    device = get_device(device)
-    clear_gpu_memory()
+            # Evaluation dataset
+            valid_dataset = PatchDataset(
+                # Directory containing the dataset
+                valid_dataset_filepath,
+                # Expected slices per fragment
+                slice_depth=slice_depth,
+                # Size of an individual patch
+                patch_size_x=patch_size_x,
+                patch_size_y=patch_size_y,
+                # Image resize ratio
+                resize_ratio=resize_ratio,
+                interpolation=interpolation,
+                # Training vs Testing mode
+                train=True,
+            )
+            img_transforms = transforms.Compose([
+                transforms.Normalize(valid_dataset.mean, valid_dataset.std),
+            ])
 
-    # Load the model, try to fit on GPU
-    if isinstance(model, str):
-        model = ImageModel(
-            model=model,
-            slice_depth=slice_depth,
-            freeze=freeze,
-        )
-        if weights_filepath is not None:
-            print(f"Loading weights from {weights_filepath}")
-            model.load_state_dict(torch.load(
-                weights_filepath,
-                map_location=device,
-            ))
-    model = model.to(device)
-    model = model.eval()
-    print_size_of_model(model)
+            # DataLoaders
+            valid_dataloader = DataLoader(
+                valid_dataset,
+                batch_size=batch_size,
+                sampler=RandomSampler(
+                    valid_dataset,
+                    num_samples=num_samples_valid,
+                    # Generator with constant seed for reproducibility
+                    generator=torch.Generator().manual_seed(42),
+                ),
+                num_workers=num_workers,
+                # This will make it go faster if it is loaded into a GPU
+                pin_memory=True,
+            )
 
-    best_score_dict: Dict[str, float] = {}
-    for subtest_name in os.listdir(valid_dir):
-        score_name = f'Dice/{subtest_name}/valid'
-        if score_name not in best_score_dict:
-            best_score_dict[score_name] = 0
+            # Make a blank prediction image
+            pred_image = np.zeros(valid_dataset.resized_size, dtype=np.float32).T
+            print(f"Pred image {valid_dataset_id} shape: {pred_image.shape}")
+            print(f"Pred image min: {pred_image.min()}, max: {pred_image.max()}")
 
-        # Name of sub-directory inside test dir
-        subtest_filepath = os.path.join(valid_dir, subtest_name)
+            score = 0
+            for i, (patch, label) in enumerate(tqdm(valid_dataloader, postfix=f"Valid {valid_dataset_id}")):
+                patch = patch.to(device)
+                patch = img_transforms(patch)
+                with torch.no_grad():
+                    preds = model(patch)
+                    preds = torch.sigmoid(preds)
+                    score += dice_score(preds, label).item()
 
-        # Evaluation dataset
-        valid_dataset = PatchDataset(
-            # Directory containing the dataset
-            subtest_filepath,
-            # Expected slices per fragment
-            slice_depth=slice_depth,
-            # Size of an individual patch
-            patch_size_x=patch_size_x,
-            patch_size_y=patch_size_y,
-            # Image resize ratio
-            resize_ratio=resize_ratio,
-            interpolation=interpolation,
-            # Training vs Testing mode
-            train=True,
-        )
-        img_transforms = transforms.Compose([
-            transforms.Normalize(valid_dataset.mean, valid_dataset.std),
-        ])
+                # Iterate through each image and prediction in the batch
+                for j, pred in enumerate(preds):
+                    pixel_index = valid_dataset.mask_indices[i * batch_size + j]
+                    pred_image[pixel_index[0], pixel_index[1]] = pred
 
-        # DataLoaders
-        valid_dataloader = DataLoader(
-            valid_dataset,
-            batch_size=batch_size,
-            sampler=SequentialSampler(valid_dataset),
-            num_workers=num_workers,
-            # This will make it go faster if it is loaded into a GPU
-            pin_memory=True,
-        )
+            # Score is average dice score for all batches
+            score /= len(valid_dataloader)
+            if writer:
+                writer.add_scalar(score_name, score, step)
 
-        # Make a blank prediction image
-        pred_image = np.zeros(valid_dataset.resized_size, dtype=np.float32).T
-        print(f"Pred image {subtest_name} shape: {pred_image.shape}")
-        print(f"Pred image min: {pred_image.min()}, max: {pred_image.max()}")
+            # Overwrite best score if it is better
+            if score > best_score_dict[score_name]:
+                best_score_dict[score_name] = score
+                if save_model:
+                    print("Saving model...")
+                    torch.save(model.state_dict(), f"{output_dir}/model_best_{score_name}.pth")
 
-        score = 0
-        for i, (patch, label) in enumerate(tqdm(valid_dataloader, postfix=f"Valid {subtest_name}")):
-            patch = patch.to(device)
-            patch = img_transforms(patch)
-            with torch.no_grad():
-                preds = model(patch)
-                preds = torch.sigmoid(preds)
-                score += dice_score(preds, label).item()
+            if writer is not None:
+                print("Writing prediction image to TensorBoard...")
+                # Add batch dimmension to pred_image for Tensorboard
+                writer.add_image(f'pred_{valid_dataset_id}',
+                                np.expand_dims(pred_image, axis=0))
 
-            # Iterate through each image and prediction in the batch
-            for j, pred in enumerate(preds):
-                pixel_index = valid_dataset.mask_indices[i * batch_size + j]
-                pred_image[pixel_index[0], pixel_index[1]] = pred
-
-        # Score is average dice score for all batches
-        score /= len(valid_dataloader)
-        if writer:
-            writer.add_scalar(score_name, score)
-
-        # Overwrite best score if it is better
-        if score_name not in best_score_dict or score > best_score_dict[score_name]:
-            best_score_dict[score_name] = score
-
-        if writer is not None:
-            print("Writing prediction image to TensorBoard...")
-            # Add batch dimmension to pred_image for Tensorboard
-            writer.add_image(f'pred_{subtest_name}',
-                             np.expand_dims(pred_image, axis=0))
-
-        # Resize pred_image to original size
-        img = Image.fromarray(pred_image * 255).convert('1')
-        img = img.resize((
-            valid_dataset.original_size[0],
-            valid_dataset.original_size[1],
-        ), resample=INTERPOLATION_MODES[interpolation])
-
-        if save_pred_img:
-            print("Saving prediction image...")
-            _image_filepath = os.path.join(
-                output_dir, f"pred_{subtest_name}.png")
-            img.save(_image_filepath)
-
-        if postproc_kernel is not None:
-            print("Postprocessing...")
-            # Erosion then Dilation
-            img = img.filter(ImageFilter.MinFilter(postproc_kernel))
-            img = img.filter(ImageFilter.MaxFilter(postproc_kernel))
-
-        if save_pred_img:
-            print("Saving prediction image...")
-            _image_filepath = os.path.join(
-                output_dir, f"pred_{subtest_name}_post.png")
-            img.save(_image_filepath)
-
-    return best_score_dict
+    return best_score_dict, model
 
 
 def eval(
@@ -909,15 +845,8 @@ def sweep_episode(hparams) -> float:
     try:
         writer = SummaryWriter(log_dir=hparams['output_dir'])
         # Train and evaluate a TFLite model
-        model = train(
+        score_dict, model  = train_valid(
             **hparams,
-            writer=writer,
-        )
-        del hparams['model']
-        # Eval takes a while, make sure you actually want to do this.
-        score_dict = valid(
-            **hparams,
-            model=model,
             writer=writer,
         )
         writer.add_hparams(hparams, score_dict)

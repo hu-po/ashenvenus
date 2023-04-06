@@ -9,6 +9,7 @@ from src import sweep_episode
 parser = argparse.ArgumentParser()
 parser.add_argument('--batch_size', type=int, default=2)
 parser.add_argument('--seed', type=int, default=0)
+parser.add_argument('--resize',  type=float, default=None)
 
 # Define the search space
 search_space = {
@@ -68,12 +69,8 @@ search_space = {
     ]),
     'num_workers': 0,
     'resize_ratio': hp.choice('resize_ratio', [
-        0.02,
-        0.04,
-        0.08,
-        # 0.1,
-        # 0.2,
-        # 0.3,
+        # Below 0.1 it can't learn
+        0.2,
     ]),
     'interpolation': hp.choice('interpolation', [
         'bilinear',
@@ -82,17 +79,21 @@ search_space = {
     ]),
     'input_size': hp.choice('input_size', [
         '224.224.65',
-        '68.68.65',
+        # '68.68.65',
     ]),
     'lr': hp.loguniform('lr',  np.log(0.0000001), np.log(0.001)),
     'num_epochs': hp.choice('num_epochs', [8]),
-    'num_samples': hp.choice('num_samples', [
+    'num_samples_train': hp.choice('num_samples_train', [
         # Larger is better, strongest predictor of score
         # 200000,
-        # 80000,
-        40000,
-        20000,
+        120000,
+        60000,
+        # 2000,
         # 8000,
+    ]),
+    'num_samples_valid': hp.choice('num_samples_valid', [
+        # Larger is more thorough, but takes more time
+        1000
     ]),
     'max_time_hours': hp.choice('max_time_hours', [
         4,
@@ -108,10 +109,12 @@ if __name__ == '__main__':
         print('\n\n Running in TEST mode \n\n')
         search_space['interpolation'] = 'nearest'
         search_space['curriculum'] = '1'
-        search_space['num_samples'] = 64
+        search_space['num_samples_train'] = 64
+        search_space['num_samples_valid'] = 64
         search_space['num_epochs'] = 2
-        search_space['resize_ratio'] = 0.01
     search_space['batch_size'] = args.batch_size
+    if args.resize:
+        search_space['resize_ratio'] = args.resize
 
     # Clean output dir    
     shutil.rmtree(search_space['output_dir'], ignore_errors=True)

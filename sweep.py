@@ -79,17 +79,17 @@ search_space = {
     ]),
     'input_size': hp.choice('input_size', [
         '224.224.65',
-        # '68.68.65',
+        '68.68.65',
     ]),
     'lr': hp.loguniform('lr',  np.log(0.0000001), np.log(0.001)),
-    'num_epochs': hp.choice('num_epochs', [8]),
+    'num_epochs': hp.choice('num_epochs', [16]),
     'num_samples_train': hp.choice('num_samples_train', [
         # Larger is better, strongest predictor of score
         # 200000,
-        120000,
-        60000,
-        # 2000,
-        # 8000,
+        # 120000,
+        # 60000,
+        4000,
+        2000,
     ]),
     'num_samples_valid': hp.choice('num_samples_valid', [
         # Larger is more thorough, but takes more time

@@ -54,7 +54,7 @@ HYPERPARAMS = {
 
     # Training
     'batch_size' : 1,
-    'num_epochs': hp.choice('num_epochs', [2]),
+    'num_epochs': hp.choice('num_epochs', [8]),
     'lr': hp.loguniform('lr',np.log(0.00001), np.log(0.01)),
     'wd': hp.choice('wd', [
         1e-4,

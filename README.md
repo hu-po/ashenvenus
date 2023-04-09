@@ -10,6 +10,12 @@ This repo is an open source entry to the [2023 Scroll Prize](https://scrollprize
 pip install -r requirements.txt
 ```
 
+Uses [Segment Anything](https://github.com/facebookresearch/segment-anything):
+
+```
+pip install git+https://github.com/facebookresearch/segment-anything.git
+```
+
 ### Training
 
 To run a hyperparameter sweep use:

@@ -1,10 +1,6 @@
 """
     Split dataset into Train and Validation, by cutting 
     the image into a top half and bottom half.
-
-scp -r C:\Users\ook\Documents\dev\ashenvenus\data\split* tren@192.168.1.30:/home/tren/dev/ashenvenus/data/ 
-scp -r C:\Users\ook\Documents\dev\ashenvenus\data\split* oop@192.168.1.34:/home/oop/dev/ashenvenus/data/ 
-
 """
 
 import os
@@ -13,18 +9,20 @@ from tqdm import tqdm
 
 image_mask_filename='mask.png'
 image_labels_filename='inklabels.png'
+image_ir_filename = 'ir.png'
 slices_dir_filename='surface_volume'
+
 
 num_slices = 65
 split = 0.85
 
-# target_dir = '/home/tren/dev/ashenvenus/data/train'
-# output_dir_train = '/home/tren/dev/ashenvenus/data/split_train'
-# output_dir_valid = '/home/tren/dev/ashenvenus/data/split_valid'
+target_dir = '/home/tren/dev/ashenvenus/data/train'
+output_dir_train = '/home/tren/dev/ashenvenus/data/split_train'
+output_dir_valid = '/home/tren/dev/ashenvenus/data/split_valid'
 
-target_dir = "C:\\Users\\ook\\Documents\\dev\\ashenvenus\\data\\train"
-output_dir_train = "C:\\Users\\ook\\Documents\\dev\\ashenvenus\\data\\split_train"
-output_dir_valid = "C:\\Users\\ook\\Documents\\dev\\ashenvenus\\data\\split_valid"
+# target_dir = "C:\\Users\\ook\\Documents\\dev\\ashenvenus\\data\\train"
+# output_dir_train = "C:\\Users\\ook\\Documents\\dev\\ashenvenus\\data\\split_train"
+# output_dir_valid = "C:\\Users\\ook\\Documents\\dev\\ashenvenus\\data\\split_valid"
 
 # Baseline is to use image mask to create guess submission
 for dataset in os.listdir(target_dir):
@@ -33,6 +31,21 @@ for dataset in os.listdir(target_dir):
     os.makedirs(dataset_train_filepath, exist_ok=True)
     dataset_valid_filepath = os.path.join(output_dir_valid, dataset)
     os.makedirs(dataset_valid_filepath, exist_ok=True)
+
+    # Open IR image
+    _image_ir_filepath = os.path.join(dataset_filepath, image_ir_filename)
+    _image_ir_train_filepath = os.path.join(dataset_train_filepath, image_ir_filename)
+    _image_ir_valid_filepath = os.path.join(dataset_valid_filepath, image_ir_filename)
+    _ir_img = Image.open(_image_ir_filepath).convert("L")
+
+    # Split into train and val
+    width, height = _ir_img.size
+    _ir_img_train = _ir_img.crop((0, 0, width, int(height * split)))
+    _ir_img_train.save(_image_ir_train_filepath)
+    _ir_img_val = _ir_img.crop((0, int(height * split), width, height))
+    _ir_img_val.save(_image_ir_valid_filepath)
+
+    continue
 
     # Open Mask image
     _image_mask_filepath = os.path.join(dataset_filepath, image_mask_filename)

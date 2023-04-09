@@ -6,7 +6,7 @@ import uuid
 import yaml
 from tensorboardX import SummaryWriter
 from hyperopt import fmin, hp, tpe
-from src import sweep_episode, OUTPUT_DIR
+from src import train_valid
 
 if os.name == 'nt':
     print("Windows Computer Detected")

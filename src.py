@@ -36,6 +36,7 @@ class FragmentDataset(Dataset):
         image_mask_filename='mask.png',
         image_labels_filename='inklabels.png',
         slices_dir_filename='surface_volume',
+        ir_image_filename = 'ir.png',
         # Expected slices per fragment
         crop_size: Tuple[int] = (3, 68, 68),
         label_size: Tuple[int] = (256, 256),
@@ -55,9 +56,10 @@ class FragmentDataset(Dataset):
         self.points_per_crop = points_per_crop
         self.train = train
         self.device = device
+
         # Open Mask image
         _image_mask_filepath = os.path.join(data_dir, image_mask_filename)
-        self.mask = np.array(cv2.imread(_image_mask_filepath, cv2.IMREAD_GRAYSCALE)).astype(np.bool)
+        self.mask = np.array(cv2.imread(_image_mask_filepath, cv2.IMREAD_GRAYSCALE)).astype(np.uint8)
         # Image dimmensions (depth, height, width)
         self.original_size = self.mask.shape
         self.crop_size = crop_size
@@ -82,6 +84,9 @@ class FragmentDataset(Dataset):
                 start_height + self.crop_size[1],
                 start_width + self.crop_size[2],
             ]
+        # DEBUG: IR image
+        _image_ir_filepath = os.path.join(data_dir, ir_image_filename)
+        self.ir_image = np.array(cv2.imread(_image_ir_filepath)).astype(np.float32)
 
     def __len__(self):
         return self.dataset_size
@@ -93,12 +98,17 @@ class FragmentDataset(Dataset):
         # Start and End points for the crop in pixel space
         start = self.indices[idx, 0, :]
         end = self.indices[idx, 1, :]
-        # Load the relevant slices and pack into image tensor
-        image = np.zeros(self.crop_size, dtype=np.float32)
-        for i, _depth in enumerate(range(start[0], end[0])):
-            _slice_filepath = os.path.join(self.slice_dir, f"{_depth:02d}.tif")
-            _slice = np.array(cv2.imread(_slice_filepath, cv2.IMREAD_GRAYSCALE)).astype(np.float32)
-            image[i, :, :] = _slice[start[1]: end[1], start[2]: end[2]]
+
+        # # Load the relevant slices and pack into image tensor
+        # image = np.zeros(self.crop_size, dtype=np.float32)
+        # for i, _depth in enumerate(range(start[0], end[0])):
+        #     _slice_filepath = os.path.join(self.slice_dir, f"{_depth:02d}.tif")
+        #     _slice = np.array(cv2.imread(_slice_filepath, cv2.IMREAD_GRAYSCALE)).astype(np.float32)
+        #     image[i, :, :] = _slice[start[1]: end[1], start[2]: end[2]]
+        # image = torch.from_numpy(image).to(device=self.device)
+
+        # DEBUG: Use IR image instead of surface volume as toy problem
+        image = self.ir_image[:, start[1]: end[1], start[2]: end[2]]
         image = torch.from_numpy(image).to(device=self.device)
 
         # Choose Points within the crop for SAM to sample

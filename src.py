@@ -20,6 +20,7 @@ from segment_anything.modeling import (
     PromptEncoder,
     Sam,
 )
+from segment_anything.utils.amg import MaskData
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 
@@ -182,28 +183,15 @@ class FragmentDataset(Dataset):
         image = self.ir_image[:, start[1]: end[1], start[2]: end[2]]
         image = torch.from_numpy(image).to(device=self.device)
 
-        # Choose Points within the crop for SAM to sample
-        point_coords = np.zeros((self.points_per_crop, 2), dtype=np.int64)
-        point_labels = np.zeros(self.points_per_crop, dtype=np.uint8)
-        for i in range(self.points_per_crop):
-            point_coords[i, 0] = np.random.randint(0, self.crop_size[1])
-            point_coords[i, 1] = np.random.randint(0, self.crop_size[2])
-            point_labels[i] = self.labels[
-                start[1] + point_coords[i, 0],
-                start[2] + point_coords[i, 1],
-            ]
-        point_coords = torch.from_numpy(point_coords).to(device=self.device)
-        point_labels = torch.from_numpy(point_labels).to(device=self.device)
-
         if self.train:
             raw_label = self.labels[start[1]:end[1], start[2]:end[2]]
             label = cv2.resize(raw_label.astype(np.uint8),
                                self.label_size, interpolation=cv2.INTER_NEAREST)
             label = torch.from_numpy(label).to(dtype=torch.float32)
             label = label.unsqueeze(0).clone().to(device=self.device)
-            return image, point_coords, point_labels, label
+            return image, label
         else:
-            return image, point_coords, point_labels
+            return image
 
 
 def train_valid(
@@ -273,35 +261,15 @@ def train_valid(
                 # pin_memory=True,
             )
             _loader = tqdm(_dataloader)
-            for images, point_coords, point_labels, labels in _loader:
+            for images, labels in _loader:
                 train_step += 1
                 if writer and log_images:
                     writer.add_images(
                         f"input.image/train/{_dataset_id}", images, train_step)
                     writer.add_images(
                         f"input.label/train/{_dataset_id}", labels*255, train_step)
-
-                    # Plot point coordinates into a blank image of size images
-                    _point_coords = point_coords.cpu().numpy()
-                    _point_labels = point_labels.cpu().numpy()
-                    _point_image = np.zeros(
-                        (1, 3, images.shape[2], images.shape[3]), dtype=np.uint8)
-                    point_width = 4
-                    for i in range(_point_coords.shape[1]):
-                        _height = _point_coords[0, i, 0]
-                        _width = _point_coords[0, i, 1]
-                        if _point_labels[0, i] == 0:
-                            _point_image[0, 0, _height-point_width:_height +
-                                         point_width, _width-point_width:_width+point_width] = 255
-                        else:
-                            _point_image[0, 1, _height-point_width:_height +
-                                         point_width, _width-point_width:_width+point_width] = 255
-                    writer.add_images(
-                        f"input.points/train/{_dataset_id}", _point_image, train_step)
-
                 image_embeddings = model.image_encoder(images)
                 sparse_embeddings, dense_embeddings = model.prompt_encoder(
-                    # points=(point_coords, point_labels),
                     points=None,
                     boxes=None,
                     masks=labels,
@@ -356,35 +324,15 @@ def train_valid(
             score = 0
             valid_step = 0
             _loader = tqdm(_dataloader)
-            for images, point_coords, point_labels, labels in _loader:
+            for images, labels in _loader:
                 valid_step += 1
                 if writer and log_images:
                     writer.add_images(
                         f"input.image/valid/{_dataset_id}", images, valid_step)
                     writer.add_images(
                         f"input.label/valid/{_dataset_id}", labels*255, valid_step)
-
-                    # Plot point coordinates into a blank image of size images
-                    _point_coords = point_coords.cpu().numpy()
-                    _point_labels = point_labels.cpu().numpy()
-                    _point_image = np.zeros(
-                        (1, 3, images.shape[2], images.shape[3]), dtype=np.uint8)
-                    point_width = 4
-                    for i in range(_point_coords.shape[1]):
-                        _height = _point_coords[0, i, 0]
-                        _width = _point_coords[0, i, 1]
-                        if _point_labels[0, i] == 0:
-                            _point_image[0, 0, _height-point_width:_height +
-                                         point_width, _width-point_width:_width+point_width] = 255
-                        else:
-                            _point_image[0, 1, _height-point_width:_height +
-                                         point_width, _width-point_width:_width+point_width] = 255
-                    writer.add_images(
-                        f"input.points/valid/{_dataset_id}", _point_image, valid_step)
-
                 image_embeddings = model.image_encoder(images)
                 sparse_embeddings, dense_embeddings = model.prompt_encoder(
-                    # points=(point_coords, point_labels),
                     points=None,
                     boxes=None,
                     masks=labels,
@@ -430,19 +378,35 @@ def eval(
     eval_dir: str = None,
     save_pred_img: bool = True,
     save_submit_csv: bool = False,
+    # Evaluation
+    batch_size: int = 1,
+    num_samples_eval: int = 100,
+    points_per_side=32,
+    pred_iou_thresh=0.86,
+    stability_score_thresh=0.92,
+    crop_n_layers=1,
+    crop_n_points_downscale_factor=2,
+    min_mask_region_area=100,  # Requires open-cv to run post-processing
+    # Model
     model: str = 'vit_b',
     weights_filepath: str = None,
+    # Dataset
+    crop_size: Tuple[int] = (3, 68, 68),
+    label_size: Tuple[int] = (1024, 1024),
+    points_per_crop: int = 8,
+    avg_depth: float = 27.,
+    std_depth: float = 10.,
     **kwargs,
 ):
     device = get_device(device)
     model = SamAutomaticMaskGenerator(
         model=sam_model_registry[model](checkpoint=weights_filepath),
-        points_per_side=32,
-        pred_iou_thresh=0.86,
-        stability_score_thresh=0.92,
-        crop_n_layers=1,
-        crop_n_points_downscale_factor=2,
-        min_mask_region_area=100,  # Requires open-cv to run post-processing
+        points_per_side=points_per_side,
+        pred_iou_thresh=pred_iou_thresh,
+        stability_score_thresh=stability_score_thresh,
+        crop_n_layers=crop_n_layers,
+        crop_n_points_downscale_factor=crop_n_points_downscale_factor,
+        min_mask_region_area=min_mask_region_area,
     )
     model.eval()
     model.to(device)
@@ -455,25 +419,49 @@ def eval(
 
     # Baseline is to use image mask to create guess submission
     for dataset_id in os.listdir(eval_dir):
+        print(f"Evaluating on {dataset_id}")
+        _dataset_filepath = os.path.join(eval_dir, dataset_id)
+        _dataset = FragmentDataset(
+            data_dir=_dataset_filepath,
+            dataset_size=num_samples_eval,
+            points_per_crop=points_per_crop,
+            crop_size=crop_size,
+            label_size=label_size,
+            avg_depth=avg_depth,
+            std_depth=std_depth,
+            train=False,
+            device=device,
+        )
+        _dataloader = DataLoader(
+            dataset=_dataset,
+            batch_size=batch_size,
+            shuffle=False,
+            # pin_memory=True,
+        )
+        mask_data: MaskData = None
+        _loader = tqdm(_dataloader)
+        for img in _loader:
 
-        # Eval Dataset
-        img = None
+            # Get masks from image
+            _mask_data: MaskData = model.generate(img)
+            """
+                `segmentation` : the mask
+                `area` : the area of the mask in pixels
+                `bbox` : the boundary box of the mask in XYWH format
+                `predicted_iou` : the model's own prediction for the quality of the mask
+                `point_coords` : the sampled input point that generated this mask
+                `stability_score` : an additional measure of mask quality
+                `crop_box` : the crop of the image used to generate this mask in XYWH format
+            """
+            # Group all the predicted masks together
+            if mask_data is None:
+                mask_data = _mask_data
+            else:
+                mask_data.cat(_mask_data)
 
-        # Get masks from image
-        masks_list = model.generate(img)
-        """
-            `segmentation` : the mask
-            `area` : the area of the mask in pixels
-            `bbox` : the boundary box of the mask in XYWH format
-            `predicted_iou` : the model's own prediction for the quality of the mask
-            `point_coords` : the sampled input point that generated this mask
-            `stability_score` : an additional measure of mask quality
-            `crop_box` : the crop of the image used to generate this mask in XYWH format
-        """
-        for _mask_info in masks_list:
-            mask = _mask_info['segmentation']
-            score_iou = _mask_info['predicted_iou']
-            score_sta = _mask_info['stability_score']
+        # Filter the masks using NMS
+
+        # Convert masks to single image
 
         if save_pred_img:
             print("Saving prediction image...")

@@ -6,14 +6,15 @@ This repo is an open source entry to the [2023 Scroll Prize](https://scrollprize
 
 ### Setup
 
+Dependencies:
+
+- [Segment Anything](https://github.com/facebookresearch/segment-anything)
+- HyperOpt
+- PyTorch
+- Tensorboard
+
 ```
 pip install -r requirements.txt
-```
-
-Uses [Segment Anything](https://github.com/facebookresearch/segment-anything):
-
-```
-pip install git+https://github.com/facebookresearch/segment-anything.git
 ```
 
 ### Training
@@ -21,10 +22,10 @@ pip install git+https://github.com/facebookresearch/segment-anything.git
 To run a hyperparameter sweep use:
 
 ```
-python sweep.py --seed 0
+python sweep.py
 ```
 
-To run a saved model use the evaluation notbeook `eval.ipynb`.
+To run a saved model use the evaluation notebook `eval.ipynb`. Follow the copy paste instructions to submit to Kaggle.
 
 ## YouTube
 
@@ -41,6 +42,7 @@ Various sources used for reference:
 - [Pretrained Video Transformer (SWIN)](https://github.com/pytorch/vision/blob/main/torchvision/models/video/swin_transformer.py)
 - [A ConvNet for the 2020s](https://arxiv.org/pdf/2201.03545.pdf)
 - [Adapting Pre-trained Vision Transformers from 2D to 3D through Weight Inflation Improves Medical Image Segmentation](https://proceedings.mlr.press/v193/zhang22a/zhang22a.pdf)
+- [Segment Anything](https://github.com/facebookresearch/segment-anything)
 
 
 ## Citation

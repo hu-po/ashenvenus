@@ -84,8 +84,6 @@ def dice_score(preds, label, beta=0.5, epsilon=1e-6):
     _score = (1 + beta * beta) * (p * r) / (beta * beta * p + r + epsilon)
     return _score
 
-# Dataset Class
-
 
 class FragmentDataset(Dataset):
     def __init__(
@@ -348,7 +346,7 @@ def train_valid(
                     writer.add_images(
                         f"output.masks/valid/{_dataset_id}", low_res_masks, valid_step)
                 loss = loss_fn(low_res_masks, labels)
-                score -= loss.item()
+                score += dice_score(low_res_masks, labels)
 
                 _loss_name = f"{loss_fn.__class__.__name__}/valid/{_dataset_id}"
                 _loader.set_postfix_str(f"{_loss_name}: {loss.item():.4f}")
@@ -357,6 +355,8 @@ def train_valid(
 
             # Overwrite best score if it is better
             score /= len(_dataloader)
+            if writer:
+                writer.add_scalar('dice', score, train_step)
             if score > best_score_dict[_score_name]:
                 print(
                     f"New best score! >> {score:.4f} (was {best_score_dict[_score_name]:.4f})")

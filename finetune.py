@@ -21,14 +21,14 @@ if os.name == 'nt':
     print("Windows Computer Detected")
     ROOT_DIR = "C:\\Users\\ook\\Documents\\dev\\"
     DATA_DIR = "C:\\Users\\ook\\Documents\\dev\\ashenvenus\\data"
-    MODEL_DIR = "C:\\Users\\ook\\Documents\\dev\\segment-anything\\models"
-    OUTPUT_DIR = "C:\\Users\\ook\\Documents\\dev\\segment-anything\\output"
+    MODEL_DIR = "C:\\Users\\ook\\Documents\\dev\\ashenvenus\\models"
+    OUTPUT_DIR = "C:\\Users\\ook\\Documents\\dev\\ashenvenus\\output"
 else:
     print("Linux Computer Detected")
     ROOT_DIR = "/home/tren/dev/"
     DATA_DIR = "/home/tren/dev/ashenvenus/data"
-    MODEL_DIR = "/home/tren/dev/segment-anything/models"
-    OUTPUT_DIR = "/home/tren/dev/segment-anything/output"
+    MODEL_DIR = "/home/tren/dev/ashenvenus/models"
+    OUTPUT_DIR = "/home/tren/dev/ashenvenus/output"
 
 # Define the search space
 HYPERPARAMS = {

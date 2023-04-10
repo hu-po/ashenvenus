@@ -169,6 +169,9 @@ class FragmentDataset(Dataset):
         self.pixel_mean = np.mean(self.ir_image[:, self.mask == 1])
         self.pixel_std = np.std(self.ir_image[:, self.mask == 1])
 
+        # TODO: Pixel stats for points inside labels, outside labels for all slices
+        # This might be better calculated beforehand and then loaded
+
     def __len__(self):
         return self.dataset_size
 
@@ -194,6 +197,12 @@ class FragmentDataset(Dataset):
         #     _slice = np.array(cv2.imread(_slice_filepath, cv2.IMREAD_GRAYSCALE)).astype(np.float32)
         #     image[i, :, :] = _slice[start[1]: end[1], start[2]: end[2]]
         # image = torch.from_numpy(image).to(device=self.device)
+
+        # TODO: Take a 3D Volume and show the top, back, left, right view of volume
+        # Bias towards a longer height than width
+        # Try to get the entire depth
+        # Find some tiling of the width and height such that you get 1024x1024
+        # 65x128x3
 
         # DEBUG: Use IR image instead of surface volume as toy problem
         image = self.ir_image[:, start[1]:end[1], start[2]:end[2]]
@@ -364,6 +373,7 @@ def train_valid(
                     image_embeddings = model.image_encoder(images)
                     sparse_embeddings, dense_embeddings = model.prompt_encoder(
                         points=(points, point_labels),
+                        # TODO: These boxes and labels might have to be per-point
                         boxes=batched_mask_to_box(labels),
                         masks=labels,
                     )

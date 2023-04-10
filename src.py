@@ -162,7 +162,7 @@ class FragmentDataset(Dataset):
         # DEBUG: IR image
         _image_ir_filepath = os.path.join(data_dir, ir_image_filename)
         self.ir_image = np.array(cv2.imread(_image_ir_filepath)).astype(
-            np.float32)
+            np.float32) / 255.0
         self.ir_image = np.transpose(self.ir_image, (2, 0, 1))
 
         # Pixel stats for ir image, only for values inside mask
@@ -182,13 +182,21 @@ class FragmentDataset(Dataset):
 
         # Create a grid of points in the crop
         points = build_point_grid(self.points_per_crop)
-        points = torch.from_numpy(points).to(device=self.device)
-
+        # Conver points into pixel space
+        points[:, 0] = points[:, 0] * self.crop_size[1]
+        points[:, 1] = points[:, 1] * self.crop_size[2]
+        points = points.astype(np.int32)
         # Get the label for each point
-        point_labels = torch.zeros((self.points_per_crop**2), dtype=torch.long)
+        point_labels = np.zeros((self.points_per_crop**2), dtype=np.int32)
         for i, point in enumerate(points):
-            point_labels[i] = self.labels[point[1], point[2]]
-        point_labels = point_labels.to(device=self.device)
+            point_labels[i] = self.labels[
+                point[0] + start[1],
+                point[1] + start[2],
+            ]
+        # Points float32 (64, B, 2)
+        # Point int32 Labels (64, B)
+        points = torch.from_numpy(points).to(dtype=torch.float32, device=self.device)
+        point_labels = torch.from_numpy(point_labels).to(dtype=torch.int32, device=self.device)
 
         # # Load the relevant slices and pack into image tensor
         # image = np.zeros(self.crop_size, dtype=np.float32)
@@ -209,7 +217,7 @@ class FragmentDataset(Dataset):
         image = torch.from_numpy(image).to(device=self.device)
 
         # Normalize image
-        image = (image - self.pixel_mean) / self.pixel_std
+        # image = (image - self.pixel_mean) / self.pixel_std
 
         if self.train:
             labels = self.labels[start[1]:end[1], start[2]:end[2]]
@@ -218,10 +226,9 @@ class FragmentDataset(Dataset):
                 self.label_size,
                 interpolation=cv2.INTER_NEAREST,
             )
-            low_res_labels = torch.from_numpy(low_res_labels).to(
-                dtype=torch.float32)
-            low_res_labels = low_res_labels.unsqueeze(0).clone().to(
-                device=self.device)
+            low_res_labels = torch.from_numpy(low_res_labels).to(dtype=torch.float32)
+            low_res_labels = low_res_labels.unsqueeze(0).to(device=self.device)
+            labels = torch.from_numpy(labels).unsqueeze(0).to(dtype=torch.float32)
             return image, points, point_labels, low_res_labels, labels
         else:
             return image
@@ -290,7 +297,8 @@ def train_valid(
     std_depth: float = 10.0,
     **kwargs,
 ):
-    device = get_device(device)
+    # device = get_device(device)
+    device = "cpu"
     model = sam_model_registry[model](checkpoint=weights_filepath)
     # TODO: Which of these should be frozen?
     # for param in model.image_encoder.parameters():
@@ -332,7 +340,7 @@ def train_valid(
                     dataset=_dataset,
                     batch_size=batch_size,
                     shuffle=True,
-                    pin_memory=True,
+                    # pin_memory=True,
                 )
                 _loader = tqdm(_dataloader)
                 score = 0
@@ -349,13 +357,11 @@ def train_valid(
                         _point_image = np.zeros(
                             (1, 3, labels.shape[2], labels.shape[3]),
                             dtype=np.uint8)
-                        _point_image[
-                            0,
-                            2, :, :] = labels.cpu().numpy()[0, 0, :, :] * 255
+                        _point_image[0, 2, :, :] = labels.cpu().numpy()[0, :, :, :]
                         point_width = 4
                         for i in range(_point_coords.shape[1]):
-                            _height = _point_coords[0, i, 0]
-                            _width = _point_coords[0, i, 1]
+                            _height = int(_point_coords[0, i, 0])
+                            _width = int(_point_coords[0, i, 1])
                             if _point_labels[0, i] == 0:
                                 _point_image[0, 0, _height -
                                              point_width:_height + point_width,
@@ -371,12 +377,21 @@ def train_valid(
                             _point_image, train_step)
                         writer.flush()
                     image_embeddings = model.image_encoder(images)
+                    # TODO: LoRAs around encoder and decoder?
+                    # Points float32 (B, 64, 2)
+                    # Point int32 Labels (B, 64)
                     sparse_embeddings, dense_embeddings = model.prompt_encoder(
                         points=(points, point_labels),
                         # TODO: These boxes and labels might have to be per-point
-                        boxes=batched_mask_to_box(labels),
-                        masks=labels,
+                        # boxes=batched_mask_to_box(labels),
+                        boxes = None,
+                        # masks=labels,
+                        masks = None,
                     )
+                    # sparse_embeddings float32 (64, 2, 256)
+                    # dense_embeddings float32 (64, 256, 64, 64)
+                    # image_embeddings float32 (B, 256, 64, 64)
+                    # TODO: Batch size over 1 fucks this up
                     low_res_masks, iou_predictions = model.mask_decoder(
                         image_embeddings=image_embeddings,
                         image_pe=model.prompt_encoder.get_dense_pe(),
@@ -399,7 +414,7 @@ def train_valid(
                         writer.add_scalar(f"{_loss_name}", loss.item(),
                                           train_step)
 
-                    score += dice_score(low_res_masks, labels)
+                    score += dice_score(low_res_masks, low_res_labels)
                 score /= len(_dataloader)
                 if writer:
                     writer.add_scalar(f"Dice/{phase}", score, train_step)

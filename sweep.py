@@ -53,7 +53,7 @@ HYPERPARAMS = {
     ]),
 
     # Training
-    'batch_size' : 1,
+    'batch_size' : 5,
     'num_epochs': hp.choice('num_epochs', [8]),
     'lr': hp.loguniform('lr',np.log(0.00001), np.log(0.01)),
     'wd': hp.choice('wd', [

@@ -2,7 +2,7 @@
 
 This repo is an open source entry to the [2023 Scroll Prize](https://scrollprize.org/) aka _The Vesuvius Challenge_. The name for this repo comes from [Venus](https://en.wikipedia.org/wiki/Venus_(mythology)#Iconography), who was the patron saint of [Pompeii](https://en.wikipedia.org/wiki/Pompeii), the city covered in Ash by the volcano Vesuvius.
 
-![roman village at the foot of a large erupting volcano, ancient mosaic fresco, apocalypse, fantasy digital art, roman columns villa --v 5 --ar 2:1](images/banner.png)
+![roman village at the foot of a large erupting volcano, ancient mosaic fresco, apocalypse, fantasy digital art, roman columns villa --v 5 --ar 2:1](assets/banner.png)
 
 ### Setup
 

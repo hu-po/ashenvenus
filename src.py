@@ -1,32 +1,24 @@
 import csv
 import gc
 import os
-from typing import Dict, Tuple
-from io import StringIO
-import PIL.Image as Image
-import yaml
 import pprint
+from io import StringIO
+from typing import Dict, Tuple
 
 import cv2
 import numpy as np
+import PIL.Image as Image
 import torch
 import torch.nn as nn
-from segment_anything import (
-    sam_model_registry,
-    SamAutomaticMaskGenerator,
-)
-from segment_anything.modeling import (
-    ImageEncoderViT,
-    MaskDecoder,
-    PromptEncoder,
-    Sam,
-)
-from segment_anything.utils.amg import (
-    MaskData,
-    build_point_grid,
-    batched_mask_to_box,
-)
+import torch.nn.functional as F
+import yaml
+from segment_anything import SamAutomaticMaskGenerator, sam_model_registry
+from segment_anything.modeling import (ImageEncoderViT, MaskDecoder,
+                                       PromptEncoder, Sam)
+from segment_anything.utils.amg import (MaskData, batched_mask_to_box,
+                                        build_point_grid)
 from torch.utils.data import DataLoader, Dataset
+from torchvision import transforms
 from tqdm import tqdm
 
 
@@ -304,10 +296,11 @@ class TiledDataset(Dataset):
         ir_image_filename="ir.png",
         pixel_stat_filename="pixel_stats.yaml",
         # Expected slices per fragment
-        crop_size: Tuple[int] = (3, 68, 68),
+        crop_size: Tuple[int] = (3, 256, 256),
+        encoder_size: Tuple[int] = (3, 1024, 1024),
         # Depth into scan to take label from
         min_depth: int = 0,
-        max_depth: int = 60,
+        max_depth: int = 42,
         # Training vs Testing mode
         train: bool = True,
         # Device to use
@@ -329,9 +322,9 @@ class TiledDataset(Dataset):
         _image_mask_filepath = os.path.join(data_dir, image_mask_filename)
         mask_image = Image.open(_image_mask_filepath).convert("L")
         self.mask = np.array(mask_image, dtype=np.uint8)
-        # Image dimmensions (depth, height, width)
         self.original_size = self.mask.shape
         self.crop_size = crop_size
+        self.encoder_size = encoder_size
         # Open Label image
         if self.train:
             _image_labels_filepath = os.path.join(data_dir, image_labels_filename)
@@ -339,9 +332,9 @@ class TiledDataset(Dataset):
             self.labels = np.array(labels_image, dtype=np.uint8)
 
         # Slices
-        self.num_slices = min_depth - max_depth
+        self.num_slices = max_depth - min_depth
         # Open Slices into numpy array
-        fragment = np.zeros((
+        self.fragment = np.zeros((
             self.num_slices,
             self.original_size[0],
             self.original_size[1],
@@ -350,7 +343,9 @@ class TiledDataset(Dataset):
         for i in tqdm(range(min_depth, max_depth), postfix='converting slices'):
             _slice_filepath = os.path.join(_slice_dir, f"{i:02d}.tif")
             slice_img = Image.open(_slice_filepath).convert("F")
-            fragment[i, :, :] = np.array(slice_img) / 65535.0
+            self.fragment[i, :, :] = np.array(slice_img) / 65535.0
+        # Pin the fragment to the device
+        # self.fragment = torch.from_numpy(self.fragment).to(device=self.device)
 
         # Sample random crops within the image
         self.indices = np.zeros((dataset_size, 2, 2), dtype=np.int64)
@@ -392,28 +387,26 @@ class TiledDataset(Dataset):
         for idx, tile in enumerate(tiles):
             row = idx // n_cols
             col = idx % n_cols
-            tiled_image[:, row * self.crop_size[1]:(row + 1) * self.crop_size[1],
-                        col * self.crop_size[2]:(col + 1) * self.crop_size[2]] = tile
-
-        # Convert to torch tensor
-        tiled_image = torch.from_numpy(tiled_image).to(dtype=torch.float32, device=self.device)
+            tiled_image[:,
+                row * self.crop_size[1]:(row + 1) * self.crop_size[1],
+                col * self.crop_size[2]:(col + 1) * self.crop_size[2],
+            ] = tile
 
         # Normalize image
-        # image = (image - self.pixel_mean) / self.pixel_std
+        # tiled_image = (tiled_image - self.pixel_mean) / self.pixel_std
 
         if self.train:
             label = self.labels[
                 start[0] + self.crop_size[1] // 2,
                 start[1] + self.crop_size[2] // 2,
             ]
-            label = torch.tensor(label, dtype=torch.long, device=self.device)
             return tiled_image, label
         else:
             return tiled_image
 
 
 class ClassyModel(nn.Module):
-    def __init__(self, image_encoder):
+    def __init__(self, image_encoder, num_channels=256, hidden_dim1=128, hidden_dim2=64, dropout_prob=0.2):
         super(ClassyModel, self).__init__()
         # Outputs a (batch_size, 256, 64, 64)
         self.image_encoder = image_encoder
@@ -422,10 +415,15 @@ class ClassyModel(nn.Module):
         self.classifier_head = nn.Sequential(
             nn.AdaptiveAvgPool2d((1, 1)),
             nn.Flatten(),
-            nn.BatchNorm1d(256),
-            nn.ReLU(),
-            nn.Dropout(0.2),
-            nn.Linear(256, 1),
+            nn.Linear(num_channels, hidden_dim1),
+            nn.LayerNorm(hidden_dim1),
+            nn.GELU(),
+            nn.Dropout(dropout_prob),
+            nn.Linear(hidden_dim1, hidden_dim2),
+            nn.LayerNorm(hidden_dim2),
+            nn.GELU(),
+            nn.Dropout(dropout_prob),
+            nn.Linear(hidden_dim2, 1)
         )
 
     def forward(self, x):
@@ -509,10 +507,11 @@ def train_valid_tiled(
                     train_step += 1
                     if writer and log_images:
                         writer.add_images(f"input-image/{phase}/{_dataset_id}",
-                                          images, train_step)
-                    image_embeddings = model.image_encoder(images)
-                    preds = model(image_embeddings)
-                    loss = loss_fn(preds, labels)
+                                          images * 255, train_step)
+                    images = images.to(dtype=torch.float32, device=device)
+                    labels = labels.to(dtype=torch.float32, device=device)
+                    preds = model(images)
+                    loss = loss_fn(preds, labels.unsqueeze(1))
                     optimizer.zero_grad()
                     loss.backward()
                     optimizer.step()

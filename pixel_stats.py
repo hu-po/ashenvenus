@@ -16,8 +16,8 @@ image_ir_filename = 'ir.png'
 slices_dir_filename = 'surface_volume'
 num_slices = 50
 
-# data_dir = "C:\\Users\\ook\\Documents\\dev\\ashenvenus\\data"
-data_dir = '/home/tren/dev/ashenvenus/data/'
+data_dir = "C:\\Users\\ook\\Documents\\dev\\ashenvenus\\data"
+# data_dir = '/home/tren/dev/ashenvenus/data/'
 
 # Find all nested sub directories that contain an image mask image
 dataset_dirs = []

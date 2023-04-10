@@ -411,6 +411,29 @@ class TiledDataset(Dataset):
         else:
             return tiled_image
 
+
+class ClassyModel(nn.Module):
+    def __init__(self, image_encoder):
+        super(ClassyModel, self).__init__()
+        # Outputs a (batch_size, 256, 64, 64)
+        self.image_encoder = image_encoder
+
+        # Add the classifier head
+        self.classifier_head = nn.Sequential(
+            nn.AdaptiveAvgPool2d((1, 1)),
+            nn.Flatten(),
+            nn.BatchNorm1d(256),
+            nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(256, 1),
+        )
+
+    def forward(self, x):
+        x = self.image_encoder(x)  # Get features from the pre-trained model
+        x = self.classifier_head(x)  # Pass the features through the classifier head
+        return x
+
+
 def train_valid_tiled(
     run_name: str = "testytest",
     output_dir: str = None,
@@ -440,16 +463,12 @@ def train_valid_tiled(
 ):
     device = get_device(device)
     # device = "cpu"
-    model = sam_model_registry[model](checkpoint=weights_filepath)
-    # TODO: Which of these should be frozen?
-    # for param in model.image_encoder.parameters():
-    #         param.requires_grad = False
-    # for param in model.prompt_encoder.parameters():
-    #         param.requires_grad = False
-    # for param in model.mask_decoder.parameters():
-    #     param.requires_grad = False
-    model.to(device=device)
+    sam_model = sam_model_registry[model](checkpoint=weights_filepath)
+    model = ClassyModel(sam_model.image_encoder)
     model.train()
+    for param in model.image_encoder.parameters():
+        param.requires_grad = False
+    model.to(device=device)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=wd)
     loss_fn = nn.BCEWithLogitsLoss()
     # TODO: Learning rate scheduler

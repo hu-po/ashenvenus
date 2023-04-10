@@ -16,13 +16,13 @@ slices_dir_filename='surface_volume'
 num_slices = 65
 split = 0.85
 
-# target_dir = '/home/tren/dev/ashenvenus/data/train'
-# output_dir_train = '/home/tren/dev/ashenvenus/data/split_train'
-# output_dir_valid = '/home/tren/dev/ashenvenus/data/split_valid'
+target_dir = '/home/tren/dev/ashenvenus/data/train'
+output_dir_train = '/home/tren/dev/ashenvenus/data/split_train'
+output_dir_valid = '/home/tren/dev/ashenvenus/data/split_valid'
 
-target_dir = "C:\\Users\\ook\\Documents\\dev\\ashenvenus\\data\\train"
-output_dir_train = "C:\\Users\\ook\\Documents\\dev\\ashenvenus\\data\\split_train"
-output_dir_valid = "C:\\Users\\ook\\Documents\\dev\\ashenvenus\\data\\split_valid"
+# target_dir = "C:\\Users\\ook\\Documents\\dev\\ashenvenus\\data\\train"
+# output_dir_train = "C:\\Users\\ook\\Documents\\dev\\ashenvenus\\data\\split_train"
+# output_dir_valid = "C:\\Users\\ook\\Documents\\dev\\ashenvenus\\data\\split_valid"
 
 # Baseline is to use image mask to create guess submission
 for dataset in os.listdir(target_dir):

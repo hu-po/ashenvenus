@@ -53,7 +53,7 @@ for dataset_dir in dataset_dirs:
         slice_img = Image.open(_slice_filepath).convert("F")
         fragment[i, :, :] = np.array(slice_img) / 65535.0
 
-  # Raw - Every Pixel in Fragment
+    # Raw - Every Pixel in Fragment
     pixel_stats['raw'] = {
         'min': float(fragment.min()),
         'max': float(fragment.max()),

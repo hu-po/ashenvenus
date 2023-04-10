@@ -21,7 +21,11 @@ from segment_anything.modeling import (
     PromptEncoder,
     Sam,
 )
-from segment_anything.utils.amg import MaskData
+from segment_anything.utils.amg import (
+    MaskData,
+    build_point_grid,
+    batched_mask_to_box,
+)
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 
@@ -161,11 +165,12 @@ class FragmentDataset(Dataset):
             np.float32)
         self.ir_image = np.transpose(self.ir_image, (2, 0, 1))
 
+        # Pixel stats for ir image, only for values inside mask
+        self.pixel_mean = np.mean(self.ir_image[:, self.mask == 1])
+        self.pixel_std = np.std(self.ir_image[:, self.mask == 1])
+
     def __len__(self):
         return self.dataset_size
-
-    def _make_pixel_stats(self):
-        pass
 
     def __getitem__(self, idx):
         # Start and End points for the crop in pixel space
@@ -173,14 +178,8 @@ class FragmentDataset(Dataset):
         end = self.indices[idx, 1, :]
 
         # Create a grid of points in the crop
-        grid = torch.meshgrid(
-            torch.linspace(start[1], end[1] - 1, self.points_per_crop),
-            torch.linspace(start[2], end[2] - 1, self.points_per_crop),
-        )
-        # Flatten the grid into a list of points
-        points = torch.stack(grid, dim=2).view(-1, 2)
-        # Convert to integer pixel coordinates
-        points = points.to(torch.int64)
+        points = build_point_grid(self.points_per_crop)
+        points = torch.from_numpy(points).to(device=self.device)
 
         # Get the label for each point
         point_labels = torch.zeros((self.points_per_crop**2), dtype=torch.long)
@@ -199,6 +198,9 @@ class FragmentDataset(Dataset):
         # DEBUG: Use IR image instead of surface volume as toy problem
         image = self.ir_image[:, start[1]:end[1], start[2]:end[2]]
         image = torch.from_numpy(image).to(device=self.device)
+
+        # Normalize image
+        image = (image - self.pixel_mean) / self.pixel_std
 
         if self.train:
             labels = self.labels[start[1]:end[1], start[2]:end[2]]
@@ -229,7 +231,7 @@ class CombinedLoss(nn.Module):
         iou = intersection.float() / union.float()
         return iou
 
-    def forward(self, logits, gt_masks):
+    def forward(self, logits, gt_masks, predicted_iou):
         # Calculate pixel-wise binary cross-entropy loss
         bce_loss = self.bce_with_logits_loss(logits, gt_masks.float())
 
@@ -239,9 +241,6 @@ class CombinedLoss(nn.Module):
 
         # Calculate actual IoU scores for each pair in the batch
         actual_iou = self.binary_iou(pred_masks, gt_masks)
-
-        # Calculate predicted IoU scores (assuming the model's last layer is a sigmoid function)
-        predicted_iou = torch.sigmoid(logits).mean(dim=(-1, -2))
 
         # Calculate the MSE loss between predicted and actual IoU scores
         iou_loss = self.mse_loss(predicted_iou, actual_iou)
@@ -297,162 +296,109 @@ def train_valid(
     best_score_dict: Dict[str, float] = {}
     for epoch in range(num_epochs):
         print(f"\n\n --- Epoch {epoch+1} of {num_epochs} --- \n\n")
-
-        # Training
-        for _dataset_id in curriculum:
-            _dataset_filepath = os.path.join(train_dir, _dataset_id)
-            print(f"Training on {_dataset_filepath} ...")
-            _dataset = FragmentDataset(
-                data_dir=_dataset_filepath,
-                dataset_size=num_samples_train,
-                points_per_crop=points_per_crop,
-                crop_size=crop_size,
-                label_size=label_size,
-                avg_depth=avg_depth,
-                std_depth=std_depth,
-                train=True,
-                device=device,
-            )
-            _dataloader = DataLoader(
-                dataset=_dataset,
-                batch_size=batch_size,
-                shuffle=True,
-                # pin_memory=True,
-            )
-            _loader = tqdm(_dataloader)
-            for images, points, point_labels, low_res_labels, labels in _loader:
-                train_step += 1
-                if writer and log_images:
-                    writer.add_images(f"input.image/train/{_dataset_id}",
-                                      images, train_step)
-                    writer.add_images(f"input.label/train/{_dataset_id}",
-                                      labels * 255, train_step)
-                    # Plot point coordinates into a blank image of size images
-                    _point_coords = points.cpu().numpy()
-                    _point_labels = point_labels.cpu().numpy()
-                    _point_image = np.zeros(
-                        (1, 3, labels.shape[2], labels.shape[3]),
-                        dtype=np.uint8)
-                    _point_image[0,
-                                 2, :, :] = labels.cpu().numpy()[0,
-                                                                 0, :, :] * 255
-                    point_width = 4
-                    for i in range(_point_coords.shape[1]):
-                        _height = _point_coords[0, i, 0]
-                        _width = _point_coords[0, i, 1]
-                        if _point_labels[0, i] == 0:
-                            _point_image[0, 0, _height - point_width:_height +
-                                         point_width,
-                                         _width - point_width:_width +
-                                         point_width] = 255
-                        else:
-                            _point_image[0, 1, _height - point_width:_height +
-                                         point_width,
-                                         _width - point_width:_width +
-                                         point_width] = 255
-                    writer.add_images(f"input.points/train/{_dataset_id}",
-                                      _point_image, train_step)
-                    writer.flush()
-                image_embeddings = model.image_encoder(images)
-                sparse_embeddings, dense_embeddings = model.prompt_encoder(
-                    points=(points, point_labels),
-                    boxes=None,
-                    masks=labels,
+        for phase, data_dir in [("Train", train_dir), ("Valid", valid_dir)]:
+            for _dataset_id in curriculum:
+                _dataset_filepath = os.path.join(data_dir, _dataset_id)
+                print(f"{phase} on {_dataset_filepath} ...")
+                _score_name = f"Dice/{phase}/{_dataset_id}"
+                if _score_name not in best_score_dict:
+                    best_score_dict[_score_name] = 0
+                _dataset = FragmentDataset(
+                    data_dir=_dataset_filepath,
+                    dataset_size=num_samples_train,
+                    points_per_crop=points_per_crop,
+                    crop_size=crop_size,
+                    label_size=label_size,
+                    avg_depth=avg_depth,
+                    std_depth=std_depth,
+                    train=True,
+                    device=device,
                 )
-                # TODO: iou predictions could be used for additional loss?
-                low_res_masks, iou_predictions = model.mask_decoder(
-                    image_embeddings=image_embeddings,
-                    image_pe=model.prompt_encoder.get_dense_pe(),
-                    sparse_prompt_embeddings=sparse_embeddings,
-                    dense_prompt_embeddings=dense_embeddings,
-                    multimask_output=False,
+                _dataloader = DataLoader(
+                    dataset=_dataset,
+                    batch_size=batch_size,
+                    shuffle=True,
+                    pin_memory=True,
                 )
-                if writer and log_images:
-                    writer.add_images(f"output.masks/train/{_dataset_id}",
-                                      low_res_masks, train_step)
-                loss = loss_fn(low_res_masks, low_res_labels)
-                optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
+                _loader = tqdm(_dataloader)
+                score = 0
+                for images, points, point_labels, low_res_labels, labels in _loader:
+                    train_step += 1
+                    if writer and log_images:
+                        writer.add_images(f"input-image/{phase}/{_dataset_id}",
+                                          images, train_step)
+                        writer.add_images(f"input-label/{phase}/{_dataset_id}",
+                                          labels * 255, train_step)
+                        # Plot point coordinates into a blank image of size images
+                        _point_coords = points.cpu().numpy()
+                        _point_labels = point_labels.cpu().numpy()
+                        _point_image = np.zeros(
+                            (1, 3, labels.shape[2], labels.shape[3]),
+                            dtype=np.uint8)
+                        _point_image[
+                            0,
+                            2, :, :] = labels.cpu().numpy()[0, 0, :, :] * 255
+                        point_width = 4
+                        for i in range(_point_coords.shape[1]):
+                            _height = _point_coords[0, i, 0]
+                            _width = _point_coords[0, i, 1]
+                            if _point_labels[0, i] == 0:
+                                _point_image[0, 0, _height -
+                                             point_width:_height + point_width,
+                                             _width - point_width:_width +
+                                             point_width] = 255
+                            else:
+                                _point_image[0, 1, _height -
+                                             point_width:_height + point_width,
+                                             _width - point_width:_width +
+                                             point_width] = 255
+                        writer.add_images(
+                            f"input-points/{phase}/{_dataset_id}",
+                            _point_image, train_step)
+                        writer.flush()
+                    image_embeddings = model.image_encoder(images)
+                    sparse_embeddings, dense_embeddings = model.prompt_encoder(
+                        points=(points, point_labels),
+                        boxes=batched_mask_to_box(labels),
+                        masks=labels,
+                    )
+                    low_res_masks, iou_predictions = model.mask_decoder(
+                        image_embeddings=image_embeddings,
+                        image_pe=model.prompt_encoder.get_dense_pe(),
+                        sparse_prompt_embeddings=sparse_embeddings,
+                        dense_prompt_embeddings=dense_embeddings,
+                        multimask_output=False,
+                    )
+                    if writer and log_images:
+                        writer.add_images(
+                            f"output.masks/{phase}/{_dataset_id}",
+                            low_res_masks, train_step)
+                    loss = loss_fn(low_res_masks, low_res_labels,
+                                   iou_predictions)
+                    optimizer.zero_grad()
+                    loss.backward()
+                    optimizer.step()
+                    _loss_name = f"{loss_fn.__class__.__name__}/{phase}/{_dataset_id}"
+                    _loader.set_postfix_str(f"{_loss_name}: {loss.item():.4f}")
+                    if writer:
+                        writer.add_scalar(f"{_loss_name}", loss.item(),
+                                          train_step)
 
-                _loss_name = f"{loss_fn.__class__.__name__}/train/{_dataset_id}"
-                _loader.set_postfix_str(f"{_loss_name}: {loss.item():.4f}")
+                    score += dice_score(low_res_masks, labels)
+                score /= len(_dataloader)
                 if writer:
-                    writer.add_scalar(f"{_loss_name}", loss.item(), train_step)
-
-        # Validation
-        #   - Will overwrite the dataset and dataloader objects
-        for _dataset_id in curriculum:
-            _dataset_filepath = os.path.join(valid_dir, _dataset_id)
-            print(f"Validating on dataset: {_dataset_filepath}")
-            _dataset = FragmentDataset(
-                data_dir=_dataset_filepath,
-                dataset_size=num_samples_valid,
-                points_per_crop=points_per_crop,
-                crop_size=crop_size,
-                label_size=label_size,
-                avg_depth=avg_depth,
-                std_depth=std_depth,
-                train=True,
-                device=device,
-            )
-            _dataloader = DataLoader(
-                dataset=_dataset,
-                batch_size=batch_size,
-                shuffle=False,
-                # pin_memory=True,
-            )
-            _score_name = f"score/valid/{_dataset_id}"
-            if _score_name not in best_score_dict:
-                best_score_dict[_score_name] = 0
-            score = 0
-            valid_step = 0
-            _loader = tqdm(_dataloader)
-            for images, labels in _loader:
-                valid_step += 1
-                if writer and log_images:
-                    writer.add_images(f"input.image/valid/{_dataset_id}",
-                                      images, valid_step)
-                    writer.add_images(f"input.label/valid/{_dataset_id}",
-                                      labels * 255, valid_step)
-                image_embeddings = model.image_encoder(images)
-                sparse_embeddings, dense_embeddings = model.prompt_encoder(
-                    points=None,
-                    boxes=None,
-                    masks=labels,
-                )
-                low_res_masks, iou_predictions = model.mask_decoder(
-                    image_embeddings=image_embeddings,
-                    image_pe=model.prompt_encoder.get_dense_pe(),
-                    sparse_prompt_embeddings=sparse_embeddings,
-                    dense_prompt_embeddings=dense_embeddings,
-                    multimask_output=False,
-                )
-                if writer and log_images:
-                    writer.add_images(f"output.masks/valid/{_dataset_id}",
-                                      low_res_masks, valid_step)
-                loss = loss_fn(low_res_masks, labels)
-                score += dice_score(low_res_masks, labels)
-
-                _loss_name = f"{loss_fn.__class__.__name__}/valid/{_dataset_id}"
-                _loader.set_postfix_str(f"{_loss_name}: {loss.item():.4f}")
-                if writer:
-                    writer.add_scalar(_loss_name, loss.item(), valid_step)
-
-            # Overwrite best score if it is better
-            score /= len(_dataloader)
-            if writer:
-                writer.add_scalar("dice", score, train_step)
-            if score > best_score_dict[_score_name]:
-                print(f"New best score! {score:.4f} ")
-                print(f"(was {best_score_dict[_score_name]:.4f})")
-                best_score_dict[_score_name] = score
-                if save_model:
-                    _model_filepath = os.path.join(
-                        output_dir, f"model_{run_name}_best_{_dataset_id}.pth")
-                    print(f"Saving model to {_model_filepath}")
-                    torch.save(model.state_dict(), _model_filepath)
-
+                    writer.add_scalar(f"Dice/{phase}", score, train_step)
+                # Overwrite best score if it is better
+                if score > best_score_dict[_score_name]:
+                    print(f"New best score! {score:.4f} ")
+                    print(f"(was {best_score_dict[_score_name]:.4f})")
+                    best_score_dict[_score_name] = score
+                    if save_model:
+                        _model_filepath = os.path.join(
+                            output_dir,
+                            f"model_{run_name}_best_{_dataset_id}.pth")
+                        print(f"Saving model to {_model_filepath}")
+                        torch.save(model.state_dict(), _model_filepath)
         # Flush writer every epoch
         writer.flush()
     writer.close()
@@ -539,13 +485,13 @@ def eval(
                 `stability_score` : an additional measure of mask quality
                 `crop_box` : the crop of the image used to generate this mask in XYWH format
             """
+            # Filter the masks using NMS
+
             # Group all the predicted masks together
             if mask_data is None:
                 mask_data = _mask_data
             else:
                 mask_data.cat(_mask_data)
-
-        # Filter the masks using NMS
 
         # Convert masks to single image
 

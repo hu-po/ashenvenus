@@ -34,16 +34,16 @@ HYPERPARAMS = {
 
     # Dataset
     'curriculum': hp.choice('curriculum', [
-        '1', # Depth of 1 - 40/45
-        '2', # Depth of 1 - 53/58
-        '3', # Depth of 1 - 48/53
-        # '123',
+        # '1', # Depth of 1 - 40/45
+        # '2', # Depth of 1 - 53/58
+        # '3', # Depth of 1 - 48/53
+        '123',
     ]),
     'num_samples_train': hp.choice('num_samples_train', [
-        8,
+        16,
     ]),
     'num_samples_valid': hp.choice('num_samples_valid', [
-        8,
+        16,
     ]),
     'crop_size_str': hp.choice('crop_size_str', [
         '3.1024.1024', # HACK: This cannot be changed for pretrained models
@@ -54,8 +54,8 @@ HYPERPARAMS = {
 
     # Training
     'batch_size' : 1,
-    'num_epochs': hp.choice('num_epochs', [8]),
-    'lr': hp.loguniform('lr',np.log(0.00001), np.log(0.01)),
+    'num_epochs': hp.choice('num_epochs', [32]),
+    'lr': hp.loguniform('lr',np.log(0.00001), np.log(0.0001)),
     'wd': hp.choice('wd', [
         1e-4,
         1e-3,
@@ -110,7 +110,7 @@ def sweep_episode(hparams) -> float:
         print(f"Potentially Bad Hyperparams:\n\n{pprint.pformat(hparams)}\n\n")
         raise e
         # print(e)
-        score = 0
+        # score = 0
     # Maximize score is minimize negative score
     return -score
 

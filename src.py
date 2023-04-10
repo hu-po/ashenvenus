@@ -134,13 +134,37 @@ class FragmentDataset(Dataset):
         self.label_size = label_size
         # Open Label image
         if self.train:
-            _image_labels_filepath = os.path.join(data_dir,
-                                                  image_labels_filename)
-            self.labels = np.array(
-                cv2.imread(_image_labels_filepath,
-                           cv2.IMREAD_GRAYSCALE)).astype(np.uint8)
+            _image_labels_filepath = os.path.join(data_dir, image_labels_filename)
+            image_lables = cv2.imread(_image_labels_filepath, cv2.IMREAD_GRAYSCALE)
+            self.labels = np.array(image_lables).astype(np.uint8)
+            # Get connected components
+            outputs = cv2.connectedComponentsWithStats(image_lables, 4, cv2.CV_32S)
+            num_labels = outputs[0]
+            labels = outputs[1]
+            stats = outputs[2]
+            centroids = outputs[3]
+            # loop over the number of unique connected component labels
+            for i in range(0, num_labels):
+                # skip first component as it is the background which we do
+                # not want to consider
+                if i == 0:
+                    continue
+                # extract the connected component statistics and centroid for
+                # the current label
+                x = stats[i, cv2.CC_STAT_LEFT]
+                y = stats[i, cv2.CC_STAT_TOP]
+                w = stats[i, cv2.CC_STAT_WIDTH]
+                h = stats[i, cv2.CC_STAT_HEIGHT]
+                area = stats[i, cv2.CC_STAT_AREA]
+                (cX, cY) = centroids[i]
+                # construct a mask for the current connected component by
+                # finding a pixels in the labels array that have the current
+                # connected component ID
+                componentMask = (labels == i).astype("uint8") * 255
+            
         # Slices
         self.slice_dir = os.path.join(data_dir, slices_dir_filename)
+
         # Sample random crops within the image
         self.indices = np.zeros((dataset_size, 2, 3), dtype=np.int64)
         for i in range(dataset_size):
@@ -159,6 +183,7 @@ class FragmentDataset(Dataset):
                 start_height + self.crop_size[1],
                 start_width + self.crop_size[2],
             ]
+
         # DEBUG: IR image
         _image_ir_filepath = os.path.join(data_dir, ir_image_filename)
         self.ir_image = np.array(cv2.imread(_image_ir_filepath)).astype(
@@ -298,7 +323,7 @@ def train_valid(
     **kwargs,
 ):
     # device = get_device(device)
-    device = "cpu"
+    # device = "cpu"
     model = sam_model_registry[model](checkpoint=weights_filepath)
     # TODO: Which of these should be frozen?
     # for param in model.image_encoder.parameters():

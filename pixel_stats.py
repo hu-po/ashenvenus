@@ -10,13 +10,14 @@ import pprint
 from PIL import Image
 from tqdm import tqdm
 
-image_mask_filename='mask.png'
-image_labels_filename='inklabels.png'
+image_mask_filename = 'mask.png'
+image_labels_filename = 'inklabels.png'
 image_ir_filename = 'ir.png'
-slices_dir_filename='surface_volume'
-num_slices = 65
+slices_dir_filename = 'surface_volume'
+num_slices = 50
 
-data_dir = "C:\\Users\\ook\\Documents\\dev\\ashenvenus\\data"
+# data_dir = "C:\\Users\\ook\\Documents\\dev\\ashenvenus\\data"
+data_dir = '/home/tren/dev/ashenvenus/data/'
 
 # Find all nested sub directories that contain an image mask image
 dataset_dirs = []
@@ -29,71 +30,72 @@ for dataset_dir in dataset_dirs:
     print(f"Processing dataset: {dataset_dir}")
 
     # Output will be a YAML file in the dataset directory
-    pixel_stats = {}
-
-    # Open IR image
-    _image_ir_filepath = os.path.join(dataset_dir, image_ir_filename)
-    ir_img = Image.open(_image_ir_filepath).convert("L")
+    pixel_stats = {
+        'raw': {'min': [], 'max': [], 'mean': [], 'std': [], 'count': 0},
+        'mask': {'min': [], 'max': [], 'mean': [], 'std': [], 'count': 0},
+        'ink': {'min': [], 'max': [], 'mean': [], 'std': [], 'count': 0},
+        'bg': {'min': [], 'max': [], 'mean': [], 'std': [], 'count': 0},
+    }
 
     # Open Mask Image
     _image_mask_filepath = os.path.join(dataset_dir, image_mask_filename)
     mask_img = Image.open(_image_mask_filepath).convert("L")
-    mask = np.array(mask_img, dtype=np.bool8)
+    mask = np.array(mask_img, dtype=np.uint8)
 
     # Open Labels image
     _image_labels_filepath = os.path.join(dataset_dir, image_labels_filename)
     labels_img = Image.open(_image_labels_filepath).convert("L")
-    labels = np.array(labels_img, dtype=np.bool8)
+    labels = np.array(labels_img, dtype=np.uint8)
 
     # Open Slices into numpy array
-    fragment = np.zeros((num_slices, labels_img.height, labels_img.width), dtype=np.float32)
+    fragment = np.zeros((num_slices, labels_img.height,
+                         labels_img.width), dtype=np.float32)
     _slice_dir = os.path.join(dataset_dir, slices_dir_filename)
     for i in tqdm(range(num_slices), postfix='converting slices'):
         _slice_filepath = os.path.join(_slice_dir, f"{i:02d}.tif")
         slice_img = Image.open(_slice_filepath).convert("F")
         fragment[i, :, :] = np.array(slice_img) / 65535.0
 
-    # Raw - Every Pixel in Fragment
-    pixel_stats['raw'] = {
-        'min': float(fragment.min()),
-        'max': float(fragment.max()),
-        'mean': float(fragment.mean()),
-        'std': float(fragment.std()),
-        'count': int(fragment.size),
-    }
+        # Raw - Every Pixel in Fragment
+        pixel_stats['raw']['min'].append(float(fragment.min()))
+        pixel_stats['raw']['max'].append(float(fragment.max()))
+        pixel_stats['raw']['mean'].append(float(fragment.mean()))
+        pixel_stats['raw']['std'].append(float(fragment.std()))
+        pixel_stats['raw']['count'] += int(fragment.size)
 
-    # Mask - Only Pixels in Mask
-    _fragment = fragment.copy()
-    _fragment[:,:,:] = mask[np.newaxis,:,:] == True
-    pixel_stats['mask'] = {
-        'min': float(_fragment.min()),
-        'max': float(_fragment.max()),
-        'mean': float(_fragment.mean()),
-        'std': float(_fragment.std()),
-        'count': int(_fragment.size),
-    }
+        # Mask - Only Pixels in Mask
+        _fragment = fragment.copy()
+        _fragment = mask == True
+        pixel_stats['mask']['min'].append(float(_fragment.min()))
+        pixel_stats['mask']['max'].append(float(_fragment.max()))
+        pixel_stats['mask']['mean'].append(float(_fragment.mean()))
+        pixel_stats['mask']['std'].append(float(_fragment.std()))
+        pixel_stats['mask']['count'] += int(_fragment.size)
 
-    # Ink - Only Pixels labeled as ink
-    _fragment = fragment.copy()
-    _fragment[:,:,:] = labels[np.newaxis,:,:] == True
-    pixel_stats['ink'] = {
-        'min': float(_fragment.min()),
-        'max': float(_fragment.max()),
-        'mean': float(_fragment.mean()),
-        'std': float(_fragment.std()),
-        'count': int(_fragment.size),
-    }
+        # Ink - Only Pixels labeled as ink
+        _fragment = fragment.copy()
+        _fragment = labels == True
+        pixel_stats['ink']['min'].append(float(_fragment.min()))
+        pixel_stats['ink']['max'].append(float(_fragment.max()))
+        pixel_stats['ink']['mean'].append(float(_fragment.mean()))
+        pixel_stats['ink']['std'].append(float(_fragment.std()))
+        pixel_stats['ink']['count'] += int(_fragment.size)
 
-    # Background - Pixels in Mask but that aren't Ink
-    _fragment = fragment.copy()
-    _fragment[:,:,:] = (mask[np.newaxis,:,:] == True) & (labels[np.newaxis,:,:] == False)
-    pixel_stats['bg'] = {
-        'min': float(_fragment.min()),
-        'max': float(_fragment.max()),
-        'mean': float(_fragment.mean()),
-        'std': float(_fragment.std()),
-        'count': int(_fragment.size),
-    }
+        # Background - Pixels in Mask but that aren't Ink
+        _fragment = fragment.copy()
+        _fragment = (mask == True) & (labels == False)
+        pixel_stats['bg']['min'].append(float(_fragment.min()))
+        pixel_stats['bg']['max'].append(float(_fragment.max()))
+        pixel_stats['bg']['mean'].append(float(_fragment.mean()))
+        pixel_stats['bg']['std'].append(float(_fragment.std()))
+        pixel_stats['bg']['count'] += int(_fragment.size)
+
+    # Calculate average statistics
+    for key in pixel_stats.keys():
+        pixel_stats[key]['min'] = float(np.mean(pixel_stats[key]['min']))
+        pixel_stats[key]['max'] = float(np.mean(pixel_stats[key]['max']))
+        pixel_stats[key]['mean'] = float(np.mean(pixel_stats[key]['mean']))
+        pixel_stats[key]['std'] = float(np.mean(pixel_stats[key]['std']))
 
     print(f"Pixel Stats: {pprint.pformat(pixel_stats)}")
 

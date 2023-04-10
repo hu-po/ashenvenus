@@ -267,7 +267,7 @@ def train_valid(
     num_epochs: int = 2,
     batch_size: int = 1,
     optimizer: str = "adam",
-    lr: float = 1e-4,
+    lr: float = 1e-5,
     wd: float = 1e-4,
     alpha: float = 0.5,
     writer=None,
@@ -283,20 +283,25 @@ def train_valid(
 ):
     device = get_device(device)
     model = sam_model_registry[model](checkpoint=weights_filepath)
-    for param in model.image_encoder.parameters():
-        param.requires_grad = False
-    for param in model.prompt_encoder.parameters():
-        param.requires_grad = False
+    # TODO: Which of these should be frozen?
+    # for param in model.image_encoder.parameters():
+    #         param.requires_grad = False
+    # for param in model.prompt_encoder.parameters():
+    #         param.requires_grad = False
+    # for param in model.mask_decoder.parameters():
+    #     param.requires_grad = False
     model.to(device=device)
     model.train()
     optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=wd)
     loss_fn = CombinedLoss(alpha=alpha)
+    # TODO: Learning rate scheduler
+    # TODO: Learning rate warmup
 
     train_step = 0
     best_score_dict: Dict[str, float] = {}
     for epoch in range(num_epochs):
         print(f"\n\n --- Epoch {epoch+1} of {num_epochs} --- \n\n")
-        for phase, data_dir in [("Train", train_dir), ("Valid", valid_dir)]:
+        for phase, data_dir, num_samples in [("Train", train_dir, num_samples_train), ("Valid", valid_dir, num_samples_valid)]:
             for _dataset_id in curriculum:
                 _dataset_filepath = os.path.join(data_dir, _dataset_id)
                 print(f"{phase} on {_dataset_filepath} ...")
@@ -305,7 +310,7 @@ def train_valid(
                     best_score_dict[_score_name] = 0
                 _dataset = FragmentDataset(
                     data_dir=_dataset_filepath,
-                    dataset_size=num_samples_train,
+                    dataset_size=num_samples,
                     points_per_crop=points_per_crop,
                     crop_size=crop_size,
                     label_size=label_size,

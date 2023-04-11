@@ -17,7 +17,7 @@ from segment_anything.modeling import (ImageEncoderViT, MaskDecoder,
                                        PromptEncoder, Sam)
 from segment_anything.utils.amg import (MaskData, batched_mask_to_box,
                                         build_point_grid)
-from torch.utils.data import DataLoader, Dataset, RandomSampler, SequentialSampler
+from torch.utils.data import DataLoader, Dataset
 from torchvision import transforms
 from tqdm import tqdm
 
@@ -81,88 +81,113 @@ def dice_score(preds, label, beta=0.5, epsilon=1e-6):
     _score = (1 + beta * beta) * (p * r) / (beta * beta * p + r + epsilon)
     return _score
 
-class TiledDataset(Dataset):
+
+class FragmentDataset(Dataset):
     def __init__(
         self,
         # Directory containing the dataset
         data_dir: str,
         # Number of random crops to take from fragment volume
         dataset_size: int = 2,
+        # Number of points to sample per crop
+        points_per_crop: int = 4,
         # Filenames of the images we'll use
         image_mask_filename="mask.png",
         image_labels_filename="inklabels.png",
         slices_dir_filename="surface_volume",
         ir_image_filename="ir.png",
-        pixel_stat_filename="pixel_stats.yaml",
         # Expected slices per fragment
-        crop_size: Tuple[int] = (3, 256, 256),
-        encoder_size: Tuple[int] = (3, 1024, 1024),
-        # Depth into scan to take label from
+        crop_size: Tuple[int] = (3, 68, 68),
+        label_size: Tuple[int] = (256, 256),
+        # Depth in scan is a Clipped Normal distribution
         min_depth: int = 0,
-        max_depth: int = 42,
+        max_depth: int = 65,
+        avg_depth: float = 27.0,
+        std_depth: float = 10.0,
         # Training vs Testing mode
         train: bool = True,
         # Device to use
         device: str = "cuda",
     ):
-        print(f"Making TiledDataset Dataset from {data_dir}")
+        print(f"Making Dataset from {data_dir}")
         self.dataset_size = dataset_size
+        self.points_per_crop = points_per_crop
         self.train = train
         self.device = device
 
-        # Pixel stats for ir image, only for values inside mask
-        _pixel_stats_filepath = os.path.join(data_dir, pixel_stat_filename)
-        with open(_pixel_stats_filepath, "r") as f:
-            pixel_stats = yaml.safe_load(f)
-        self.pixel_mean = pixel_stats["raw"]["mean"]
-        self.pixel_std = pixel_stats["raw"]["std"]
-        # TODO: Need to re-run pixel stat script
-        # self.pixel_mean = pixel_stats["mask"]["mean"]
-        # self.pixel_std = pixel_stats["mask"]["std"]
-
         # Open Mask image
         _image_mask_filepath = os.path.join(data_dir, image_mask_filename)
-        mask_image = Image.open(_image_mask_filepath).convert("L")
-        self.mask = np.array(mask_image, dtype=np.uint8)
+        self.mask = np.array(
+            cv2.imread(_image_mask_filepath,
+                       cv2.IMREAD_GRAYSCALE)).astype(np.uint8)
+        # Image dimmensions (depth, height, width)
         self.original_size = self.mask.shape
         self.crop_size = crop_size
-        self.encoder_size = encoder_size
+        self.label_size = label_size
         # Open Label image
         if self.train:
             _image_labels_filepath = os.path.join(data_dir, image_labels_filename)
-            labels_image = Image.open(_image_labels_filepath).convert("L")
-            self.labels = np.array(labels_image, dtype=np.uint8)
-
+            image_lables = cv2.imread(_image_labels_filepath, cv2.IMREAD_GRAYSCALE)
+            self.labels = np.array(image_lables).astype(np.uint8)
+            # Get connected components
+            outputs = cv2.connectedComponentsWithStats(image_lables, 4, cv2.CV_32S)
+            num_labels = outputs[0]
+            labels = outputs[1]
+            stats = outputs[2]
+            centroids = outputs[3]
+            # loop over the number of unique connected component labels
+            for i in range(0, num_labels):
+                # skip first component as it is the background which we do
+                # not want to consider
+                if i == 0:
+                    continue
+                # extract the connected component statistics and centroid for
+                # the current label
+                x = stats[i, cv2.CC_STAT_LEFT]
+                y = stats[i, cv2.CC_STAT_TOP]
+                w = stats[i, cv2.CC_STAT_WIDTH]
+                h = stats[i, cv2.CC_STAT_HEIGHT]
+                area = stats[i, cv2.CC_STAT_AREA]
+                (cX, cY) = centroids[i]
+                # construct a mask for the current connected component by
+                # finding a pixels in the labels array that have the current
+                # connected component ID
+                componentMask = (labels == i).astype("uint8") * 255
+            
         # Slices
-        self.num_slices = max_depth - min_depth
-        # Open Slices into numpy array
-        self.fragment = np.zeros((
-            self.num_slices,
-            self.original_size[0],
-            self.original_size[1],
-        ), dtype=np.float32)
-        _slice_dir = os.path.join(data_dir, slices_dir_filename)
-        for i in tqdm(range(min_depth, max_depth), postfix='converting slices'):
-            _slice_filepath = os.path.join(_slice_dir, f"{i:02d}.tif")
-            slice_img = Image.open(_slice_filepath).convert("F")
-            self.fragment[i, :, :] = np.array(slice_img) / 65535.0
-        # Pin the fragment to the device
-        # self.fragment = torch.from_numpy(self.fragment).to(device=self.device)
+        self.slice_dir = os.path.join(data_dir, slices_dir_filename)
 
         # Sample random crops within the image
-        self.indices = np.zeros((dataset_size, 2, 2), dtype=np.int64)
+        self.indices = np.zeros((dataset_size, 2, 3), dtype=np.int64)
         for i in range(dataset_size):
-            # Select a random starting point
+            # Select a random starting point for the subvolume
+            start_depth = int(
+                np.clip(np.random.normal(avg_depth, std_depth), min_depth,
+                        max_depth))
             start_height = np.random.randint(
                 0, self.original_size[0] - self.crop_size[1])
             start_width = np.random.randint(
                 0, self.original_size[1] - self.crop_size[2])
-            self.indices[i, 0, :] = [start_height, start_width]
+            self.indices[i, 0, :] = [start_depth, start_height, start_width]
             # End point is start point + crop size
             self.indices[i, 1, :] = [
+                start_depth + self.crop_size[0],
                 start_height + self.crop_size[1],
                 start_width + self.crop_size[2],
             ]
+
+        # DEBUG: IR image
+        _image_ir_filepath = os.path.join(data_dir, ir_image_filename)
+        self.ir_image = np.array(cv2.imread(_image_ir_filepath)).astype(
+            np.float32) / 255.0
+        self.ir_image = np.transpose(self.ir_image, (2, 0, 1))
+
+        # Pixel stats for ir image, only for values inside mask
+        self.pixel_mean = np.mean(self.ir_image[:, self.mask == 1])
+        self.pixel_std = np.std(self.ir_image[:, self.mask == 1])
+
+        # TODO: Pixel stats for points inside labels, outside labels for all slices
+        # This might be better calculated beforehand and then loaded
 
     def __len__(self):
         return self.dataset_size
@@ -172,69 +197,92 @@ class TiledDataset(Dataset):
         start = self.indices[idx, 0, :]
         end = self.indices[idx, 1, :]
 
-        # Sub-volume
-        tensor = self.fragment[:, start[0]:end[0], start[1]:end[1]]
+        # Create a grid of points in the crop
+        points = build_point_grid(self.points_per_crop)
+        # Conver points into pixel space
+        points[:, 0] = points[:, 0] * self.crop_size[1]
+        points[:, 1] = points[:, 1] * self.crop_size[2]
+        points = points.astype(np.int32)
+        # Get the label for each point
+        point_labels = np.zeros((self.points_per_crop**2), dtype=np.int32)
+        for i, point in enumerate(points):
+            point_labels[i] = self.labels[
+                point[0] + start[1],
+                point[1] + start[2],
+            ]
+        # Points float32 (64, B, 2)
+        # Point int32 Labels (64, B)
+        points = torch.from_numpy(points).to(dtype=torch.float32, device=self.device)
+        point_labels = torch.from_numpy(point_labels).to(dtype=torch.int32, device=self.device)
 
-        # Slice the tensor along the first dimension
-        tiles = np.split(tensor, len(tensor) // 3, axis=0)
+        # # Load the relevant slices and pack into image tensor
+        # image = np.zeros(self.crop_size, dtype=np.float32)
+        # for i, _depth in enumerate(range(start[0], end[0])):
+        #     _slice_filepath = os.path.join(self.slice_dir, f"{_depth:02d}.tif")
+        #     _slice = np.array(cv2.imread(_slice_filepath, cv2.IMREAD_GRAYSCALE)).astype(np.float32)
+        #     image[i, :, :] = _slice[start[1]: end[1], start[2]: end[2]]
+        # image = torch.from_numpy(image).to(device=self.device)
 
-        # Calculate tileing dimmensions (square image)
-        n_rows = int(np.ceil(np.sqrt(len(tiles))))
-        n_cols = int(np.ceil(len(tiles) / n_rows))
+        # TODO: Take a 3D Volume and show the top, back, left, right view of volume
+        # Bias towards a longer height than width
+        # Try to get the entire depth
+        # Find some tiling of the width and height such that you get 1024x1024
+        # 65x128x3
 
-        # Initialize a larger array of 3xNxN
-        tiled_image = np.zeros((3, n_rows * self.crop_size[1], n_cols * self.crop_size[2]))
-
-        # Lay out the tiles left to right, top to bottom into the larger array
-        for idx, tile in enumerate(tiles):
-            row = idx // n_cols
-            col = idx % n_cols
-            tiled_image[:,
-                row * self.crop_size[1]:(row + 1) * self.crop_size[1],
-                col * self.crop_size[2]:(col + 1) * self.crop_size[2],
-            ] = tile
+        # DEBUG: Use IR image instead of surface volume as toy problem
+        image = self.ir_image[:, start[1]:end[1], start[2]:end[2]]
+        image = torch.from_numpy(image).to(device=self.device)
 
         # Normalize image
-        tiled_image = (tiled_image - self.pixel_mean) / self.pixel_std
+        # image = (image - self.pixel_mean) / self.pixel_std
 
         if self.train:
-            label = self.labels[
-                start[0] + self.crop_size[1] // 2,
-                start[1] + self.crop_size[2] // 2,
-            ]
-            return tiled_image, label
+            labels = self.labels[start[1]:end[1], start[2]:end[2]]
+            low_res_labels = cv2.resize(
+                labels.astype(np.uint8),
+                self.label_size,
+                interpolation=cv2.INTER_NEAREST,
+            )
+            low_res_labels = torch.from_numpy(low_res_labels).to(dtype=torch.float32)
+            low_res_labels = low_res_labels.unsqueeze(0).to(device=self.device)
+            labels = torch.from_numpy(labels).unsqueeze(0).to(dtype=torch.float32)
+            return image, points, point_labels, low_res_labels, labels
         else:
-            return tiled_image
+            return image
 
+class CombinedLoss(nn.Module):
+    def __init__(self, alpha=0.5):
+        super(CombinedLoss, self).__init__()
+        self.alpha = alpha
+        self.bce_with_logits_loss = nn.BCEWithLogitsLoss()
+        self.mse_loss = nn.MSELoss()
 
-class ClassyModel(nn.Module):
-    def __init__(self, image_encoder, num_channels=256, hidden_dim1=128, hidden_dim2=64, dropout_prob=0.2):
-        super(ClassyModel, self).__init__()
-        # Outputs a (batch_size, 256, 64, 64)
-        self.image_encoder = image_encoder
+    def binary_iou(self, mask1, mask2):
+        intersection = (mask1 * mask2).sum(dim=(-1, -2))
+        union = torch.logical_or(mask1, mask2).sum(dim=(-1, -2))
+        iou = intersection.float() / union.float()
+        return iou
 
-        # Add the classifier head
-        self.classifier_head = nn.Sequential(
-            nn.AdaptiveAvgPool2d((1, 1)),
-            nn.Flatten(),
-            nn.Linear(num_channels, hidden_dim1),
-            nn.LayerNorm(hidden_dim1),
-            nn.GELU(),
-            nn.Dropout(dropout_prob),
-            nn.Linear(hidden_dim1, hidden_dim2),
-            nn.LayerNorm(hidden_dim2),
-            nn.GELU(),
-            nn.Dropout(dropout_prob),
-            nn.Linear(hidden_dim2, 1)
-        )
+    def forward(self, logits, gt_masks, predicted_iou):
+        # Calculate pixel-wise binary cross-entropy loss
+        bce_loss = self.bce_with_logits_loss(logits, gt_masks.float())
 
-    def forward(self, x):
-        x = self.image_encoder(x)  # Get features from the pre-trained model
-        x = self.classifier_head(x)  # Pass the features through the classifier head
-        return x
+        # Calculate predicted masks
+        pred_masks = torch.sigmoid(logits) >= 0.5
+        pred_masks = pred_masks.float()
 
+        # Calculate actual IoU scores for each pair in the batch
+        actual_iou = self.binary_iou(pred_masks, gt_masks)
 
-def train_valid_tiled(
+        # Calculate the MSE loss between predicted and actual IoU scores
+        iou_loss = self.mse_loss(predicted_iou, actual_iou)
+
+        # Combine the two losses using a weighting factor alpha
+        combined_loss = self.alpha * bce_loss + (1 - self.alpha) * iou_loss
+
+        return combined_loss
+
+def train_valid(
     run_name: str = "testytest",
     output_dir: str = None,
     train_dir: str = None,
@@ -252,25 +300,32 @@ def train_valid_tiled(
     optimizer: str = "adam",
     lr: float = 1e-5,
     wd: float = 1e-4,
+    alpha: float = 0.5,
     writer=None,
     log_images: bool = False,
     # Dataset
     curriculum: str = "1",
     crop_size: Tuple[int] = (3, 68, 68),
-    min_depth: int = 0,
-    max_depth: int = 60,
+    label_size: Tuple[int] = (1024, 1024),
+    points_per_crop: int = 8,
+    avg_depth: float = 27.0,
+    std_depth: float = 10.0,
     **kwargs,
 ):
-    device = get_device(device)
+    # device = get_device(device)
     # device = "cpu"
-    sam_model = sam_model_registry[model](checkpoint=weights_filepath)
-    model = ClassyModel(sam_model.image_encoder)
-    model.train()
-    for param in model.image_encoder.parameters():
-        param.requires_grad = False
+    model = sam_model_registry[model](checkpoint=weights_filepath)
+    # TODO: Which of these should be frozen?
+    # for param in model.image_encoder.parameters():
+    #         param.requires_grad = False
+    # for param in model.prompt_encoder.parameters():
+    #         param.requires_grad = False
+    # for param in model.mask_decoder.parameters():
+    #     param.requires_grad = False
     model.to(device=device)
+    model.train()
     optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=wd)
-    loss_fn = nn.BCEWithLogitsLoss()
+    loss_fn = CombinedLoss(alpha=alpha)
     # TODO: Learning rate scheduler
     # TODO: Learning rate warmup
 
@@ -278,22 +333,21 @@ def train_valid_tiled(
     best_score_dict: Dict[str, float] = {}
     for epoch in range(num_epochs):
         print(f"\n\n --- Epoch {epoch+1} of {num_epochs} --- \n\n")
-        for phase, data_dir, num_samples in [
-            ("Train", train_dir, num_samples_train),
-            ("Valid", valid_dir, num_samples_valid),
-        ]:
+        for phase, data_dir, num_samples in [("Train", train_dir, num_samples_train), ("Valid", valid_dir, num_samples_valid)]:
             for _dataset_id in curriculum:
                 _dataset_filepath = os.path.join(data_dir, _dataset_id)
                 print(f"{phase} on {_dataset_filepath} ...")
                 _score_name = f"Dice/{phase}/{_dataset_id}"
                 if _score_name not in best_score_dict:
                     best_score_dict[_score_name] = 0
-                _dataset = TiledDataset(
+                _dataset = FragmentDataset(
                     data_dir=_dataset_filepath,
                     dataset_size=num_samples,
+                    points_per_crop=points_per_crop,
                     crop_size=crop_size,
-                    min_depth=min_depth,
-                    max_depth=max_depth,
+                    label_size=label_size,
+                    avg_depth=avg_depth,
+                    std_depth=std_depth,
                     train=True,
                     device=device,
                 )
@@ -301,19 +355,71 @@ def train_valid_tiled(
                     dataset=_dataset,
                     batch_size=batch_size,
                     shuffle=True,
-                    pin_memory=True,
+                    # pin_memory=True,
                 )
                 _loader = tqdm(_dataloader)
                 score = 0
-                for images, labels in _loader:
+                for images, points, point_labels, low_res_labels, labels in _loader:
                     train_step += 1
                     if writer and log_images:
                         writer.add_images(f"input-image/{phase}/{_dataset_id}",
-                                          images * 255, train_step)
-                    images = images.to(dtype=torch.float32, device=device)
-                    labels = labels.to(dtype=torch.float32, device=device)
-                    preds = model(images)
-                    loss = loss_fn(preds, labels.unsqueeze(1))
+                                          images, train_step)
+                        writer.add_images(f"input-label/{phase}/{_dataset_id}",
+                                          labels * 255, train_step)
+                        # Plot point coordinates into a blank image of size images
+                        _point_coords = points.cpu().numpy()
+                        _point_labels = point_labels.cpu().numpy()
+                        _point_image = np.zeros(
+                            (1, 3, labels.shape[2], labels.shape[3]),
+                            dtype=np.uint8)
+                        _point_image[0, 2, :, :] = labels.cpu().numpy()[0, :, :, :]
+                        point_width = 4
+                        for i in range(_point_coords.shape[1]):
+                            _height = int(_point_coords[0, i, 0])
+                            _width = int(_point_coords[0, i, 1])
+                            if _point_labels[0, i] == 0:
+                                _point_image[0, 0, _height -
+                                             point_width:_height + point_width,
+                                             _width - point_width:_width +
+                                             point_width] = 255
+                            else:
+                                _point_image[0, 1, _height -
+                                             point_width:_height + point_width,
+                                             _width - point_width:_width +
+                                             point_width] = 255
+                        writer.add_images(
+                            f"input-points/{phase}/{_dataset_id}",
+                            _point_image, train_step)
+                        writer.flush()
+                    image_embeddings = model.image_encoder(images)
+                    # TODO: LoRAs around encoder and decoder?
+                    # Points float32 (B, 64, 2)
+                    # Point int32 Labels (B, 64)
+                    sparse_embeddings, dense_embeddings = model.prompt_encoder(
+                        points=(points, point_labels),
+                        # TODO: These boxes and labels might have to be per-point
+                        # boxes=batched_mask_to_box(labels),
+                        boxes = None,
+                        # masks=labels,
+                        masks = None,
+                    )
+                    # sparse_embeddings float32 (64, 2, 256)
+                    # dense_embeddings float32 (64, 256, 64, 64)
+                    # image_embeddings float32 (B, 256, 64, 64)
+                    # TODO: Batch size over 1 fucks this up
+                    low_res_masks, iou_predictions = model.mask_decoder(
+                        image_embeddings=image_embeddings,
+                        image_pe=model.prompt_encoder.get_dense_pe(),
+                        sparse_prompt_embeddings=sparse_embeddings,
+                        dense_prompt_embeddings=dense_embeddings,
+                        multimask_output=False,
+                    )
+                    if writer and log_images:
+                        writer.add_images(
+                            f"output.masks/{phase}/{_dataset_id}",
+                            low_res_masks, train_step)
+                    loss = loss_fn(low_res_masks, low_res_labels,
+                                   iou_predictions)
                     optimizer.zero_grad()
                     loss.backward()
                     optimizer.step()
@@ -323,7 +429,7 @@ def train_valid_tiled(
                         writer.add_scalar(f"{_loss_name}", loss.item(),
                                           train_step)
 
-                    score += dice_score(preds, labels)
+                    score += dice_score(low_res_masks, low_res_labels)
                 score /= len(_dataloader)
                 if writer:
                     writer.add_scalar(f"Dice/{phase}", score, train_step)
@@ -342,6 +448,7 @@ def train_valid_tiled(
         writer.flush()
     writer.close()
     return best_score_dict
+
 
 def eval(
     output_dir: str = None,

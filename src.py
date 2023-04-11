@@ -315,8 +315,11 @@ class TiledDataset(Dataset):
         _pixel_stats_filepath = os.path.join(data_dir, pixel_stat_filename)
         with open(_pixel_stats_filepath, "r") as f:
             pixel_stats = yaml.safe_load(f)
-        self.pixel_mean = pixel_stats["mask"]["mean"]
-        self.pixel_std = pixel_stats["mask"]["std"]
+        self.pixel_mean = pixel_stats["raw"]["mean"]
+        self.pixel_std = pixel_stats["raw"]["std"]
+        # TODO: Need to re-run pixel stat script
+        # self.pixel_mean = pixel_stats["mask"]["mean"]
+        # self.pixel_std = pixel_stats["mask"]["std"]
 
         # Open Mask image
         _image_mask_filepath = os.path.join(data_dir, image_mask_filename)
@@ -393,7 +396,7 @@ class TiledDataset(Dataset):
             ] = tile
 
         # Normalize image
-        # tiled_image = (tiled_image - self.pixel_mean) / self.pixel_std
+        tiled_image = (tiled_image - self.pixel_mean) / self.pixel_std
 
         if self.train:
             label = self.labels[
@@ -451,7 +454,7 @@ def train_valid_tiled(
     lr: float = 1e-5,
     wd: float = 1e-4,
     writer=None,
-    log_images: bool = True,
+    log_images: bool = False,
     # Dataset
     curriculum: str = "1",
     crop_size: Tuple[int] = (3, 68, 68),

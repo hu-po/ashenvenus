@@ -36,14 +36,16 @@ HYPERPARAMS = {
     'curriculum': hp.choice('curriculum', [
         '1', # Depth of 1 - 40/45
         # '2', # Depth of 1 - 53/58
-        # '3', # Depth of 1 - 48/53
-        # '123',
+        '3', # Depth of 1 - 48/53
+        '123',
     ]),
     'num_samples_train': hp.choice('num_samples_train', [
-        8,
+        # 2,
+        8000,
     ]),
     'num_samples_valid': hp.choice('num_samples_valid', [
-        8,
+        # 2,
+        100,
     ]),
     'crop_size_str': hp.choice('crop_size_str', [
         '3.256.256', # The beautiful harmonics of the universe, this tiles perfectly with a depth of 42
@@ -52,9 +54,9 @@ HYPERPARAMS = {
         42,
     ]),
     # Training
-    'batch_size' : 1,
+    'batch_size' : 4,
     'num_epochs': hp.choice('num_epochs', [2]),
-    'lr': hp.loguniform('lr',np.log(0.00001), np.log(0.0001)),
+    'lr': hp.loguniform('lr',np.log(0.00001), np.log(0.01)),
     'wd': hp.choice('wd', [
         1e-4,
         1e-3,

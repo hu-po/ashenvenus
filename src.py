@@ -110,6 +110,7 @@ class TiledDataset(Dataset):
         # Expected slices per fragment
         crop_size: Tuple[int] = (256, 256),
         encoder_size: Tuple[int] = (1024, 1024),
+        label_size: Tuple[int] = (8, 8),
         # Depth into scan to take label from
         min_depth: int = 0,
         max_depth: int = 42,
@@ -122,7 +123,12 @@ class TiledDataset(Dataset):
         self.train = train
         self.device = device
         self.crop_size = crop_size
+        self.crop_half_height = self.crop_size[0] // 2
+        self.crop_half_width = self.crop_size[1] // 2
         self.encoder_size = encoder_size
+        self.label_size = label_size
+        self.label_half_height = self.label_size[0] // 2
+        self.label_half_width = self.label_size[1] // 2
         self.interp = interp
 
         # Pixel stats for ir image, only for values inside mask
@@ -154,7 +160,14 @@ class TiledDataset(Dataset):
             if self.resize != 1.0:
                 labels_image = labels_image.resize(self.resized_size[::-1], resample=INTERPOLATION_MODES[interp])
             self.labels = np.array(labels_image, dtype=np.uint8) / 255.0
-
+            # Pad the labels using label size
+            self.labels = np.pad(
+                self.labels,
+                ((self.label_half_height, self.label_half_height),
+                 (self.label_half_width, self.label_half_width)),
+                mode="constant",
+                constant_values=0,
+            )
         # Open Slices into numpy array
         self.crop_depth = max_depth - min_depth
         self.fragment = np.zeros((
@@ -183,15 +196,14 @@ class TiledDataset(Dataset):
     def __getitem__(self, idx):
         crop_center_height = self.sample_points[0][idx]
         crop_center_width = self.sample_points[1][idx]
-        crop_half_height = self.crop_size[0] // 2
-        crop_half_width = self.crop_size[1] // 2
+
         # Account for padding
         crop_center_height_pad = self.crop_size[0] + crop_center_height
         crop_center_width_pad = self.crop_size[1] + crop_center_width
         # Crop the fragment
         crop = self.fragment[:, 
-            crop_center_height_pad - crop_half_height:crop_center_height_pad + crop_half_height,
-            crop_center_width_pad - crop_half_width:crop_center_width_pad + crop_half_width,
+            crop_center_height_pad - self.crop_half_height:crop_center_height_pad + self.crop_half_height,
+            crop_center_width_pad - self.crop_half_width:crop_center_width_pad + self.crop_half_width,
         ]
 
         # Calculate tileing dimmensions (square image)
@@ -219,10 +231,13 @@ class TiledDataset(Dataset):
             tiled_image = np.transpose(tiled_image, (2, 0, 1))
 
         # Normalize image
-        # tiled_image = (tiled_image - self.pixel_mean) / self.pixel_std
+        tiled_image = (tiled_image - self.pixel_mean) / self.pixel_std
 
         if self.train:
-            return tiled_image, self.labels[crop_center_height, crop_center_width]
+            return tiled_image, self.labels[
+                crop_center_height - self.label_half_height : crop_center_height + self.label_half_height,
+                crop_center_width - self.label_half_width : crop_center_width + self.label_half_width,
+            ]
         else:
             return tiled_image
 
@@ -230,6 +245,7 @@ class TiledDataset(Dataset):
 class ClassyModel(nn.Module):
     def __init__(self,
                  image_encoder,
+                 label_size: Tuple[int] = (8, 8),
                  num_channels=256,
                  hidden_dim1=128,
                  hidden_dim2=64,
@@ -237,19 +253,29 @@ class ClassyModel(nn.Module):
         super(ClassyModel, self).__init__()
         # Outputs a (batch_size, 256, 64, 64)
         self.image_encoder = image_encoder
+        self.label_size = label_size
 
         # Add the classifier head
         self.classifier_head = nn.Sequential(
-            nn.AdaptiveAvgPool2d((1, 1)), nn.Flatten(),
-            nn.Linear(num_channels, hidden_dim1), nn.LayerNorm(hidden_dim1),
-            nn.GELU(), nn.Dropout(dropout_prob),
-            nn.Linear(hidden_dim1, hidden_dim2), nn.LayerNorm(hidden_dim2),
-            nn.GELU(), nn.Dropout(dropout_prob), nn.Linear(hidden_dim2, 1))
+            nn.AdaptiveAvgPool2d((1, 1)),
+            nn.Flatten(),
+            nn.Linear(num_channels, hidden_dim1),
+            nn.LayerNorm(hidden_dim1),
+            nn.GELU(),
+            nn.Dropout(dropout_prob),
+            nn.Linear(hidden_dim1, hidden_dim2),
+            nn.LayerNorm(hidden_dim2),
+            nn.GELU(),
+            nn.Dropout(dropout_prob),
+            # Go from flat 1d hidden_dim (B, hidden_dim2) to label size (B, 8, 8)
+            nn.Linear(hidden_dim2, label_size[0] * label_size[1]),
+        )
 
     def forward(self, x):
-        x = self.image_encoder(x)  # Get features from the pre-trained model
-        x = self.classifier_head(
-            x)  # Pass the features through the classifier head
+        x = self.image_encoder(x)
+        x = self.classifier_head(x)
+        # reshape output to labels size
+        x = x.view(-1, self.label_size[0], self.label_size[1])
         return x
 
 
@@ -298,6 +324,7 @@ def train_valid(
     curriculum: str = "1",
     resize: float = 1.0,
     crop_size: Tuple[int] = (3, 256, 256),
+    label_size: Tuple[int] = (8, 8),
     min_depth: int = 0,
     max_depth: int = 60,
     **kwargs,
@@ -360,13 +387,16 @@ def train_valid(
                     if writer and log_images:
                         writer.add_images(f"input-images/{phase}/{_dataset_id}",
                                           images, train_step)
+                        writer.add_images(f"input-labels/{phase}/{_dataset_id}",
+                                          labels * 255, train_step)
                         writer.flush()
-                        # writer.add_images(f"input-labels/{phase}/{_dataset_id}",
-                        #                   labels * 255, train_step)
                     images = images.to(dtype=torch.float32, device=device)
                     labels = labels.to(dtype=torch.float32, device=device)
                     preds = model(images)
-                    loss = loss_fn(preds, labels.unsqueeze(1))
+                    if writer and log_images:
+                        writer.add_images(f"input-images/{phase}/{_dataset_id}",
+                                          preds, train_step)
+                    loss = loss_fn(preds, labels)
                     optimizer.zero_grad()
                     loss.backward()
                     optimizer.step()

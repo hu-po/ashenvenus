@@ -13,16 +13,15 @@ from src import train_valid
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--seed', type=int, default=42)
-parser.add_argument('--batch_size', type=int, default=1)
 
 if os.name == 'nt':
     print("Windows Computer Detected")
     ROOT_DIR =  "C:\\Users\\ook\\Documents\\dev"
     DATA_DIR = os.path.join(ROOT_DIR, "ashenvenus\\data\\split")
     MODEL_DIR = os.path.join(ROOT_DIR, "ashenvenus\\models")
-    OUTPUT_DIR = os.path.join(ROOT_DIR, "ashenvenus\\output"
+    OUTPUT_DIR = os.path.join(ROOT_DIR, "ashenvenus\\output")
     parser.add_argument('--batch_size', type=int, default=5)
-    shutil.rmtree(OUTPUT_DIR, ignore_errors=True))
+    shutil.rmtree(OUTPUT_DIR, ignore_errors=True)
 else:
     if os.path.isdir("/home/tren"):
         print("Linux Computer 1 Detected")
@@ -82,6 +81,7 @@ HYPERPARAMS = {
         'flat',
     ]),
     # Training
+    'seed': 0,
     'batch_size' : 2,
     'num_epochs': hp.choice('num_epochs', [
         4,
@@ -97,7 +97,6 @@ HYPERPARAMS = {
         1e-3,
         0,
     ]),
-    'seed': 0,
 }
 
 def sweep_episode(hparams) -> float:

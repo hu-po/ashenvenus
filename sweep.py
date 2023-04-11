@@ -1,25 +1,36 @@
+import argparse
 import os
-import numpy as np
-import shutil
 import pprint
+import shutil
 import uuid
+
+import numpy as np
 import yaml
-from tensorboardX import SummaryWriter
 from hyperopt import fmin, hp, tpe
+from tensorboardX import SummaryWriter
+
 from src import train_valid
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--seed', type=int, default=42)
+parser.add_argument('--batch_size', type=int, default=2)
 
 if os.name == 'nt':
     print("Windows Computer Detected")
-    ROOT_DIR = "C:\\Users\\ook\\Documents\\dev\\"
-    DATA_DIR = "C:\\Users\\ook\\Documents\\dev\\ashenvenus\\data"
-    MODEL_DIR = "C:\\Users\\ook\\Documents\\dev\\ashenvenus\\models"
-    OUTPUT_DIR = "C:\\Users\\ook\\Documents\\dev\\ashenvenus\\output"
+    ROOT_DIR =  "C:\\Users\\ook\\Documents\\dev"
+    DATA_DIR = os.path.join(ROOT_DIR, "ashenvenus\\data\\split")
+    MODEL_DIR = os.path.join(ROOT_DIR, "ashenvenus\\models")
+    OUTPUT_DIR = os.path.join(ROOT_DIR, "ashenvenus\\output")
 else:
-    print("Linux Computer Detected")
-    ROOT_DIR = "/home/tren/dev/"
-    DATA_DIR = "/home/tren/dev/ashenvenus/data/split"
-    MODEL_DIR = "/home/tren/dev/ashenvenus/models"
-    OUTPUT_DIR = "/home/tren/dev/ashenvenus/output"
+    if os.path.isdir("/home/tren"):
+        print("Linux Computer 1 Detected")
+        ROOT_DIR = "/home/tren/dev/"
+    elif os.path.isdir("/home/oop"):
+        print("Linux Computer 2 Detected")
+        ROOT_DIR = "/home/oop/dev/"
+        DATA_DIR = os.path.join(ROOT_DIR, "ashenvenus/data/split")
+        MODEL_DIR = os.path.join(ROOT_DIR, "ashenvenus/models")
+        OUTPUT_DIR = os.path.join(ROOT_DIR, "ashenvenus/output")
 
 # Define the search space
 HYPERPARAMS = {
@@ -41,14 +52,19 @@ HYPERPARAMS = {
     ]),
     'num_samples_train': hp.choice('num_samples_train', [
         # 2,
-        200,
+        2000,
     ]),
     'num_samples_valid': hp.choice('num_samples_valid', [
         # 2,
         10,
     ]),
+    'resize': hp.choice('resize', [
+        # 1.0, # Universal Harmonics
+        0.3,
+    ]),
     'crop_size_str': hp.choice('crop_size_str', [
-        '256.256', # The beautiful harmonics of the universe, this tiles perfectly with a depth of 42
+        # '256.256', # Universal Harmonics
+        '68.68',
     ]),
     'max_depth': hp.choice('max_depth', [
         42,
@@ -60,12 +76,21 @@ HYPERPARAMS = {
     ]),
     # Training
     'batch_size' : 2,
-    'num_epochs': hp.choice('num_epochs', [32]),
-    'lr': hp.loguniform('lr',np.log(0.00001), np.log(0.01)),
+    'num_epochs': hp.choice('num_epochs', [
+        4,
+        8,
+    ]),
+    'warmup_epochs': hp.choice('warmup_epochs', [
+        0,
+        1,
+    ]),
+    'lr': hp.loguniform('lr',np.log(0.0001), np.log(0.01)),
     'wd': hp.choice('wd', [
         1e-4,
         1e-3,
+        0,
     ]),
+    'seed': 0,
 }
 
 def sweep_episode(hparams) -> float:
@@ -121,14 +146,12 @@ def sweep_episode(hparams) -> float:
 
 if __name__ == "__main__":
 
-    import argparse
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--seed', type=int, default=42)
-    args = parser.parse_args()
-    
     # Clean output dir    
     shutil.rmtree(OUTPUT_DIR, ignore_errors=True)
 
+    args = parser.parse_args()
+    HYPERPARAMS['seed'] = args.seed
+    HYPERPARAMS['batch_size'] = args.batch_size
     best = fmin(
         sweep_episode,
         space=HYPERPARAMS,

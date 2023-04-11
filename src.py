@@ -11,7 +11,6 @@ import PIL.Image as Image
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.optim.lr_scheduler import 
 import yaml
 from PIL import Image, ImageFilter
 from torch.optim.lr_scheduler import LambdaLR
@@ -123,6 +122,7 @@ class TiledDataset(Dataset):
         self.device = device
         self.crop_size = crop_size
         self.encoder_size = encoder_size
+        self.interp = interp
 
         # Pixel stats for ir image, only for values inside mask
         _pixel_stats_filepath = os.path.join(data_dir, pixel_stat_filename)
@@ -137,19 +137,22 @@ class TiledDataset(Dataset):
         # Open Mask image
         _image_mask_filepath = os.path.join(data_dir, image_mask_filename)
         mask_image = Image.open(_image_mask_filepath).convert("L")
-        self.original_size = self.mask_image.size
-        self.resized_size = [self.original_size[0] * resize, self.original_size[1] * resize]
-        mask_image = mask_image.resize(self.resized_size, resample=INTERPOLATION_MODES[interp])
+        self.original_size = mask_image.height, mask_image.width
+        self.resized_size = [
+            int(self.original_size[0] * resize), 
+            int(self.original_size[1] * resize),
+        ]
+        mask_image = mask_image.resize(self.resized_size[::-1], resample=INTERPOLATION_MODES[interp])
         mask = np.array(mask_image, dtype=np.uint8)
         # Open Label image
         if self.train:
             _image_labels_filepath = os.path.join(data_dir,image_labels_filename)
             labels_image = Image.open(_image_labels_filepath).convert("L")
-            labels_image = labels_image.resize(self.resized_size, resample=INTERPOLATION_MODES[interp])
-            self.labels = np.array(labels_image, dtype=np.uint8)
+            labels_image = labels_image.resize(self.resized_size[::-1], resample=INTERPOLATION_MODES[interp])
+            self.labels = np.array(labels_image, dtype=np.uint8) / 255.0
 
         # Open Slices into numpy array
-        self.crop_depth = max_depth - min_depth,
+        self.crop_depth = max_depth - min_depth
         self.fragment = np.zeros((
             self.crop_depth,
             self.original_size[0],
@@ -161,27 +164,31 @@ class TiledDataset(Dataset):
                       postfix='converting slices'):
             _slice_filepath = os.path.join(_slice_dir, f"{i:02d}.tif")
             slice_img = Image.open(_slice_filepath).convert("F")
-            slice_img = slice_img.resize(self.resized_size, resample=INTERPOLATION_MODES[interp])
+            slice_img = slice_img.resize(self.resized_size[::-1], resample=INTERPOLATION_MODES[interp])
             self.fragment[i, :, :] = np.array(slice_img) / 65535.0
-            # Pad the fragment using crop size
-            self.fragment = np.pad(self.fragment, ((0, 0), (crop_size[0], crop_size[0]), (crop_size[1], crop_size[1])), mode='symmetric')
+        # Pad the fragment using crop size
+        self.fragment = np.pad(self.fragment, ((0, 0), (crop_size[0], crop_size[0]), (crop_size[1], crop_size[1])), mode='symmetric')
 
         # First index where mask is 1
-        self.mask_indices = np.where(mask == 1)
+        self.sample_points = np.where(mask == 255)
 
 
     def __len__(self):
-        return self.len(self.mask_indices[0])
+        return self.len(self.sample_points[0])
 
     def __getitem__(self, idx):
-
-        start = self.mask_indices[0][idx]
-        end = self.mask_indices[1][idx]
-
-        # Sub-volume
-        _crop_half_height = self.crop_size[0] // 2
-        _crop_half_width = self.crop_size[1] // 2
-        _crop = self.fragment[:, start - _crop_half_width:start + _crop_half_width, end - _crop_half_height:end + _crop_half_height]
+        crop_center_height = self.sample_points[0][idx]
+        crop_center_width = self.sample_points[1][idx]
+        crop_half_height = self.crop_size[0] // 2
+        crop_half_width = self.crop_size[1] // 2
+        # Account for padding
+        crop_center_height += self.crop_size[0]
+        crop_center_width += self.crop_size[1]
+        # Crop the fragment
+        crop = self.fragment[:, 
+            crop_center_height - crop_half_height:crop_center_height + crop_half_height,
+            crop_center_width - crop_half_width:crop_center_width + crop_half_width,
+        ]
 
         # Calculate tileing dimmensions (square image)
         n_tiles = int(np.ceil(self.crop_depth / 3.0))
@@ -194,15 +201,19 @@ class TiledDataset(Dataset):
             row = idx // n_cols
             col = idx % n_cols
             tiled_image[:, row * self.crop_size[0]:(row + 1) * self.crop_size[0],
-                        col * self.crop_size[1]:(col + 1) * self.crop_size[1]] = _crop[idx * 3:(idx + 1) * 3, :, :]
+                        col * self.crop_size[1]:(col + 1) * self.crop_size[1]] = crop[idx * 3:(idx + 1) * 3, :, :]
+
+        # Resize to encoder size
+        tiled_image = Image.fromarray(tiled_image, 'RGB')
+        tiled_image = tiled_image.resize(self.encoder_size[::-1], resample=INTERPOLATION_MODES[self.interp])
+        tiled_image = np.array(tiled_image, dtype=np.float32)
+        tiled_image = np.transpose(tiled_image, (2, 0, 1))/255.0
 
         # Normalize image
         tiled_image = (tiled_image - self.pixel_mean) / self.pixel_std
 
         if self.train:
-            label = self.labels[start[0] + self.crop_size[1] // 2,
-                                start[1] + self.crop_size[2] // 2, ]
-            return tiled_image, label
+            return tiled_image, self.labels[crop_center_height, crop_center_width]
         else:
             return tiled_image
 
@@ -267,12 +278,13 @@ def train_valid(
     num_epochs: int = 2,
     warmup_epochs: int = 0,
     batch_size: int = 1,
+    threshold: float = 0.4,
     optimizer: str = "adam",
     lr: float = 1e-5,
     lr_sched = "cosine",
     wd: float = 1e-4,
     writer=None,
-    log_images: bool = False,
+    log_images: bool = True,
     # Dataset
     curriculum: str = "1",
     resize: float = 1.0,
@@ -289,7 +301,7 @@ def train_valid(
     for param in model.image_encoder.parameters():
         param.requires_grad = False
     model.to(device=device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr) #, weight_decay=wd)
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=wd)
     loss_fn = nn.BCEWithLogitsLoss()
     if lr_sched == "cosine":
         _f = lambda x: warmup_cosine_annealing(x, num_epochs, warmup_epochs, eta_min=0.1 * lr, eta_max=lr)
@@ -337,8 +349,10 @@ def train_valid(
                 for images, labels in _loader:
                     train_step += 1
                     if writer and log_images:
-                        writer.add_images(f"input-image/{phase}/{_dataset_id}",
-                                          images * 255, train_step)
+                        writer.add_images(f"input-images/{phase}/{_dataset_id}",
+                                          images, train_step)
+                        # writer.add_images(f"input-labels/{phase}/{_dataset_id}",
+                        #                   labels * 255, train_step)
                     images = images.to(dtype=torch.float32, device=device)
                     labels = labels.to(dtype=torch.float32, device=device)
                     preds = model(images)
@@ -350,7 +364,8 @@ def train_valid(
                     _loader.set_postfix_str(f"{_loss_name}: {loss.item():.4f}")
                     if writer:
                         writer.add_scalar(_loss_name, loss.item(), train_step)
-                    score += dice_score(preds, labels)
+                    with torch.no_grad():
+                        score += dice_score(preds, torch.sigmoid(labels) > threshold)
                 score /= len(_dataloader)
                 if writer:
                     writer.add_scalar(f"Dice/{phase}/{_dataset_id}", score, train_step)
@@ -440,7 +455,7 @@ def eval(
         print(f"Pred image {_dataset_id} shape: {pred_image.shape}")
         print(f"Pred image min: {pred_image.min()}, max: {pred_image.max()}")
 
-        _loader = tqdm(_dataloader, postfix=f"Eval {_dataset_id}"))
+        _loader = tqdm(_dataloader, postfix=f"Eval {_dataset_id}")
         for images, labels in _loader:
             train_step += 1
             if writer and log_images:

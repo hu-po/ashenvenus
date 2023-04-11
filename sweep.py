@@ -6,7 +6,7 @@ import uuid
 import yaml
 from tensorboardX import SummaryWriter
 from hyperopt import fmin, hp, tpe
-from src import train_valid_tiled
+from src import train_valid
 
 if os.name == 'nt':
     print("Windows Computer Detected")
@@ -90,7 +90,7 @@ def sweep_episode(hparams) -> float:
     try:
         writer = SummaryWriter(log_dir=output_dir)
         # Train and evaluate a TFLite model
-        score_dict = train_valid_tiled(
+        score_dict = train_valid(
             run_name =run_name,
             output_dir = output_dir,
             train_dir = train_dir,

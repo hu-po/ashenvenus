@@ -3,7 +3,7 @@ import gc
 import os
 import pprint
 from io import StringIO
-from typing import Dict, Tuple
+from typing import Dict, Tuple, Union
 
 import cv2
 import numpy as np
@@ -12,12 +12,15 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import yaml
+from PIL import Image, ImageFilter
 from segment_anything import SamAutomaticMaskGenerator, sam_model_registry
 from segment_anything.modeling import (ImageEncoderViT, MaskDecoder,
                                        PromptEncoder, Sam)
 from segment_anything.utils.amg import (MaskData, batched_mask_to_box,
                                         build_point_grid)
-from torch.utils.data import DataLoader, Dataset, RandomSampler, SequentialSampler
+from tensorboardX import SummaryWriter
+from torch.utils.data import (DataLoader, Dataset, RandomSampler,
+                              SequentialSampler)
 from torchvision import transforms
 from tqdm import tqdm
 
@@ -234,7 +237,7 @@ class ClassyModel(nn.Module):
         return x
 
 
-def train_valid_tiled(
+def train_valid(
     run_name: str = "testytest",
     output_dir: str = None,
     train_dir: str = None,
@@ -256,7 +259,7 @@ def train_valid_tiled(
     log_images: bool = False,
     # Dataset
     curriculum: str = "1",
-    crop_size: Tuple[int] = (3, 68, 68),
+    crop_size: Tuple[int] = (3, 256, 256),
     min_depth: int = 0,
     max_depth: int = 60,
     **kwargs,
@@ -346,105 +349,160 @@ def train_valid_tiled(
 def eval(
     output_dir: str = None,
     eval_dir: str = None,
-    save_pred_img: bool = True,
-    save_submit_csv: bool = False,
-    # Evaluation
-    batch_size: int = 1,
-    num_samples_eval: int = 100,
-    points_per_side=32,
-    pred_iou_thresh=0.86,
-    stability_score_thresh=0.92,
-    crop_n_layers=1,
-    crop_n_points_downscale_factor=2,
-    min_mask_region_area=100,  # Requires open-cv to run post-processing
     # Model
     model: str = "vit_b",
-    weights_filepath: str = None,
+    weights_filepath: str = "path/to/model.pth",
+    # Evaluation
+    device: str = None,
+    threshold: float = 0.5,
+    postproc_kernel: int = 3,
+    log_images: bool = False,
+    save_pred_img: bool = True,
+    save_submit_csv: bool = False,
+    save_histograms: bool = False,
+    writer=None,
     # Dataset
-    crop_size: Tuple[int] = (3, 68, 68),
-    label_size: Tuple[int] = (1024, 1024),
-    points_per_crop: int = 8,
-    avg_depth: float = 27.0,
-    std_depth: float = 10.0,
+    crop_size: Tuple[int] = (3, 256, 256),
+    min_depth: int = 0,
+    max_depth: int = 60,
     **kwargs,
 ):
     device = get_device(device)
-    model = SamAutomaticMaskGenerator(
-        model=sam_model_registry[model](checkpoint=weights_filepath),
-        points_per_side=points_per_side,
-        pred_iou_thresh=pred_iou_thresh,
-        stability_score_thresh=stability_score_thresh,
-        crop_n_layers=crop_n_layers,
-        crop_n_points_downscale_factor=crop_n_points_downscale_factor,
-        min_mask_region_area=min_mask_region_area,
-    )
-    model.eval()
-    model.to(device)
+
+    # device = "cpu"
+    sam_model = sam_model_registry[model](checkpoint=weights_filepath)
+    model = ClassyModel(sam_model.image_encoder)
+    model.train()
+    for param in model.image_encoder.parameters():
+        param.requires_grad = False
+    model.to(device=device)
+    model = model.eval()
 
     if save_submit_csv:
-        submission_filepath = os.path.join(output_dir, "submission.csv")
-        with open(submission_filepath, "w") as f:
+        submission_filepath = os.path.join(output_dir, 'submission.csv')
+        with open(submission_filepath, 'w') as f:
             # Write header
             f.write("Id,Predicted\n")
 
     # Baseline is to use image mask to create guess submission
-    for dataset_id in os.listdir(eval_dir):
-        print(f"Evaluating on {dataset_id}")
-        _dataset_filepath = os.path.join(eval_dir, dataset_id)
-        _dataset = FragmentDataset(
-            data_dir=_dataset_filepath,
-            dataset_size=num_samples_eval,
-            points_per_crop=points_per_crop,
-            crop_size=crop_size,
-            label_size=label_size,
-            avg_depth=avg_depth,
-            std_depth=std_depth,
+    for subtest_name in os.listdir(eval_dir):
+
+        # Name of sub-directory inside test dir
+        subtest_filepath = os.path.join(eval_dir, subtest_name)
+
+        # Evaluation dataset
+        eval_dataset = PatchDataset(
+            # Directory containing the dataset
+            subtest_filepath,
+            # Expected slices per fragment
+            slice_depth=slice_depth,
+            # Size of an individual patch
+            patch_size_x=patch_size_x,
+            patch_size_y=patch_size_y,
+            # Image resize ratio
+            resize_ratio=resize_ratio,
+            interpolation=interpolation,
+            # Training vs Testing mode
             train=False,
-            device=device,
         )
-        _dataloader = DataLoader(
-            dataset=_dataset,
+        img_transforms = transforms.Compose([
+            transforms.Normalize(eval_dataset.mean, eval_dataset.std),
+        ])
+
+        # DataLoaders
+        eval_dataloader = DataLoader(
+            eval_dataset,
             batch_size=batch_size,
-            shuffle=False,
-            # pin_memory=True,
+            sampler=SequentialSampler(eval_dataset),
+            num_workers=num_workers,
+            # This will make it go faster if it is loaded into a GPU
+            pin_memory=True,
         )
-        mask_data: MaskData = None
-        _loader = tqdm(_dataloader)
-        for img in _loader:
 
-            # Get masks from image
-            _mask_data: MaskData = model.generate(img)
-            """
-                `segmentation` : the mask
-                `area` : the area of the mask in pixels
-                `bbox` : the boundary box of the mask in XYWH format
-                `predicted_iou` : the model's own prediction for the quality of the mask
-                `point_coords` : the sampled input point that generated this mask
-                `stability_score` : an additional measure of mask quality
-                `crop_box` : the crop of the image used to generate this mask in XYWH format
-            """
-            # Filter the masks using NMS
+        # Make a blank prediction image
+        pred_image = np.zeros(eval_dataset.resized_size, dtype=np.float32).T
+        print(f"Pred image {subtest_name} shape: {pred_image.shape}")
+        print(f"Pred image min: {pred_image.min()}, max: {pred_image.max()}")
 
-            # Group all the predicted masks together
-            if mask_data is None:
-                mask_data = _mask_data
-            else:
-                mask_data.cat(_mask_data)
+        for i, patch in enumerate(tqdm(eval_dataloader, postfix=f"Eval {subtest_name}")):
+            patch = patch.to(device)
+            patch = img_transforms(patch)
+            with torch.no_grad():
+                preds = model(patch)
+                preds = torch.sigmoid(preds)
 
-        # Convert masks to single image
+            # Iterate through each image and prediction in the batch
+            for j, pred in enumerate(preds):
+                pixel_index = eval_dataset.mask_indices[i * batch_size + j]
+                pred_image[pixel_index[0], pixel_index[1]] = pred
+
+        if writer is not None:
+            print("Writing prediction image to TensorBoard...")
+            writer.add_image(f'pred_{subtest_name}', np.expand_dims(pred_image, axis=0))
+
+        if save_histograms:
+            # Save histogram of predictions as image
+            print("Saving prediction histogram...")
+            _num_bins = 100
+            np_hist, _ = np.histogram(pred_image.flatten(), bins=_num_bins, range=(0, 1), density=True)
+            np_hist = np_hist / np_hist.sum()
+            hist = np.zeros((_num_bins, 100), dtype=np.uint8)
+            for bin in range(_num_bins):
+                _height = int(np_hist[bin] * 100)
+                hist[bin, 0:_height] = 255
+            hist_img = Image.fromarray(hist)
+            _histogram_filepath = os.path.join(
+                output_dir, f"pred_{subtest_name}_histogram.png")
+            hist_img.save(_histogram_filepath)
+
+            if writer is not None:
+                print("Writing prediction histogram to TensorBoard...")
+                writer.add_histogram(f'pred_{subtest_name}', pred_image)
+
+        # Resize pred_image to original size
+        img = Image.fromarray(pred_image * 255).convert('1')
+        img = img.resize((
+            eval_dataset.original_size[0],
+            eval_dataset.original_size[1],
+        ), resample=INTERPOLATION_MODES[interpolation])
 
         if save_pred_img:
             print("Saving prediction image...")
-            _image_filepath = os.path.join(output_dir,
-                                           f"pred_{dataset_id}.png")
+            _image_filepath = os.path.join(
+                output_dir, f"pred_{subtest_name}.png")
+            img.save(_image_filepath)
+
+        if postproc_kernel is not None:
+            print("Postprocessing...")
+            # Erosion then Dilation
+            img = img.filter(ImageFilter.MinFilter(postproc_kernel))
+            img = img.filter(ImageFilter.MaxFilter(postproc_kernel))
+
+        if save_pred_img:
+            print("Saving prediction image...")
+            _image_filepath = os.path.join(
+                output_dir, f"pred_{subtest_name}_post.png")
             img.save(_image_filepath)
 
         if save_submit_csv:
             print("Saving submission csv...")
             img = np.array(img).flatten()
+            # Convert image to binary using threshold
+            img = np.where(img > threshold, 1, 0).astype(np.uint8)
+            # Convert image to RLE
+            # start_time = time.time()
+            # inklabels_rle_original = image_to_rle(img)
+            # print(f"RLE conversion (ORIGINAL) took {time.time() - start_time:.2f} seconds")
+            start_time = time.time()
             inklabels_rle_fast = image_to_rle_fast(img)
-            with open(submission_filepath, "a") as f:
-                f.write(f"{dataset_id},{inklabels_rle_fast}\n")
+            print(f"RLE conversion (FAST) took {time.time() - start_time:.2f} seconds")
+            # assert inklabels_rle_original == inklabels_rle_fast, "RLE conversion is not the same!"
+            with open(submission_filepath, 'a') as f:
+                f.write(f"{subtest_name},{inklabels_rle_fast}\n")
+
+    if save_pred_img and save_submit_csv:
+        save_rle_as_image(submission_filepath, output_dir,
+                          subtest_name, pred_image.shape)
 
 
 def eval_from_episode_dir(

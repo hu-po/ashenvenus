@@ -16,8 +16,8 @@ image_ir_filename = 'ir.png'
 slices_dir_filename = 'surface_volume'
 num_slices = 50
 
-data_dir = "C:\\Users\\ook\\Documents\\dev\\ashenvenus\\data"
-# data_dir = '/home/tren/dev/ashenvenus/data/'
+# data_dir = "C:\\Users\\ook\\Documents\\dev\\ashenvenus\\data\\split*"
+data_dir = '/home/tren/dev/ashenvenus/data/split/'
 
 # Find all nested sub directories that contain an image mask image
 dataset_dirs = []
@@ -65,7 +65,7 @@ for dataset_dir in dataset_dirs:
 
         # Mask - Only Pixels in Mask
         _fragment = fragment.copy()
-        _fragment = mask == True
+        _fragment = mask > 0
         pixel_stats['mask']['min'].append(float(_fragment.min()))
         pixel_stats['mask']['max'].append(float(_fragment.max()))
         pixel_stats['mask']['mean'].append(float(_fragment.mean()))
@@ -74,7 +74,7 @@ for dataset_dir in dataset_dirs:
 
         # Ink - Only Pixels labeled as ink
         _fragment = fragment.copy()
-        _fragment = labels == True
+        _fragment = labels > 0
         pixel_stats['ink']['min'].append(float(_fragment.min()))
         pixel_stats['ink']['max'].append(float(_fragment.max()))
         pixel_stats['ink']['mean'].append(float(_fragment.mean()))
@@ -83,7 +83,7 @@ for dataset_dir in dataset_dirs:
 
         # Background - Pixels in Mask but that aren't Ink
         _fragment = fragment.copy()
-        _fragment = (mask == True) & (labels == False)
+        _fragment = (mask > 0) & (labels > 0)
         pixel_stats['bg']['min'].append(float(_fragment.min()))
         pixel_stats['bg']['max'].append(float(_fragment.max()))
         pixel_stats['bg']['mean'].append(float(_fragment.mean()))

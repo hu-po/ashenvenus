@@ -20,14 +20,19 @@ if os.name == 'nt':
     ROOT_DIR =  "C:\\Users\\ook\\Documents\\dev"
     DATA_DIR = os.path.join(ROOT_DIR, "ashenvenus\\data\\split")
     MODEL_DIR = os.path.join(ROOT_DIR, "ashenvenus\\models")
-    OUTPUT_DIR = os.path.join(ROOT_DIR, "ashenvenus\\output")
+    OUTPUT_DIR = os.path.join(ROOT_DIR, "ashenvenus\\output"
+    parser.add_argument('--batch_size', type=int, default=5)
+    shutil.rmtree(OUTPUT_DIR, ignore_errors=True))
 else:
     if os.path.isdir("/home/tren"):
         print("Linux Computer 1 Detected")
         ROOT_DIR = "/home/tren/dev/"
+        parser.add_argument('--batch_size', type=int, default=2)
     elif os.path.isdir("/home/oop"):
         print("Linux Computer 2 Detected")
         ROOT_DIR = "/home/oop/dev/"
+        parser.add_argument('--batch_size', type=int, default=3)
+        shutil.rmtree(OUTPUT_DIR, ignore_errors=True)
     DATA_DIR = os.path.join(ROOT_DIR, "ashenvenus/data/split")
     MODEL_DIR = os.path.join(ROOT_DIR, "ashenvenus/models")
     OUTPUT_DIR = os.path.join(ROOT_DIR, "ashenvenus/output")
@@ -147,10 +152,6 @@ def sweep_episode(hparams) -> float:
     return -score
 
 if __name__ == "__main__":
-
-    # Clean output dir    
-    shutil.rmtree(OUTPUT_DIR, ignore_errors=True)
-
     args = parser.parse_args()
     HYPERPARAMS['seed'] = args.seed
     HYPERPARAMS['batch_size'] = args.batch_size

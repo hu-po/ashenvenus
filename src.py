@@ -293,7 +293,7 @@ def train_valid(
     lr_sched = "cosine",
     wd: float = 1e-4,
     writer=None,
-    log_images: bool = True,
+    log_images: bool = False,
     # Dataset
     curriculum: str = "1",
     resize: float = 1.0,

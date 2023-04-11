@@ -159,10 +159,10 @@ class TiledDataset(Dataset):
             labels_image = Image.open(_image_labels_filepath).convert("L")
             if self.resize != 1.0:
                 labels_image = labels_image.resize(self.resized_size[::-1], resample=INTERPOLATION_MODES[interp])
-            self.labels = np.array(labels_image, dtype=np.uint8) / 255.0
+            labels = np.array(labels_image, dtype=np.uint8) / 255.0
             # Pad the labels using label size
             self.labels = np.pad(
-                self.labels,
+                labels,
                 ((self.label_half_height, self.label_half_height),
                  (self.label_half_width, self.label_half_width)),
                 mode="constant",
@@ -187,8 +187,25 @@ class TiledDataset(Dataset):
         # Pad the fragment using crop size
         self.fragment = np.pad(self.fragment, ((0, 0), (crop_size[0], crop_size[0]), (crop_size[1], crop_size[1])), mode='constant', constant_values=0.0)
 
-        # First index where mask is 1
-        self.sample_points = np.where(mask == 255)
+        if train:
+            # Sample evenly from label and background
+            _label_points = np.where(labels > 0)
+            _bg_points =  np.where((labels == 0) & (mask == 255))
+            _num_points = min(len(_label_points[0]), len(_bg_points[0]))
+            _label_points = (
+                _label_points[0][:_num_points],
+                _label_points[1][:_num_points],
+            )
+            _bg_points = (
+                _bg_points[0][:_num_points],
+                _bg_points[1][:_num_points],
+            )
+            self.sample_points = (
+                np.concatenate((_label_points[0], _bg_points[0])),
+                np.concatenate((_label_points[1], _bg_points[1])),
+            )
+        else:
+            self.sample_points = np.where(mask == 255)
 
     def __len__(self):
         return len(self.sample_points[0])
@@ -244,7 +261,7 @@ class TiledDataset(Dataset):
 
 class ClassyModel(nn.Module):
     def __init__(self,
-                 image_encoder,
+                 image_encoder: nn.Module = None,
                  label_size: Tuple[int] = (8, 8),
                  num_channels=256,
                  hidden_dim1=128,
@@ -305,7 +322,12 @@ def train_valid(
     # Model
     model: str = "vit_b",
     weights_filepath: str = "path/to/model.pth",
+    freeze: bool = True,
     save_model: bool = True,
+    num_channels: int = 256,
+    hidden_dim1: int = 128,
+    hidden_dim2: int = 64,
+    dropout_prob: int = 0.2,
     # Training
     device: str = None,
     num_samples_train: int = 2,
@@ -323,6 +345,7 @@ def train_valid(
     # Dataset
     curriculum: str = "1",
     resize: float = 1.0,
+    interp: str = "bilinear",
     crop_size: Tuple[int] = (3, 256, 256),
     label_size: Tuple[int] = (8, 8),
     min_depth: int = 0,
@@ -332,10 +355,19 @@ def train_valid(
     device = get_device(device)
     # device = "cpu"
     sam_model = sam_model_registry[model](checkpoint=weights_filepath)
-    model = ClassyModel(sam_model.image_encoder)
+    model = ClassyModel(
+        image_encoder=sam_model.image_encoder,
+        label_size = label_size,
+        num_channels = num_channels,
+        hidden_dim1 = hidden_dim1,
+        hidden_dim2 = hidden_dim2,
+        dropout_prob = dropout_prob,
+    )
     model.train()
-    for param in model.image_encoder.parameters():
-        param.requires_grad = False
+    if freeze:
+        print("Freezing image encoder")
+        for param in model.image_encoder.parameters():
+            param.requires_grad = False
     model.to(device=device)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=wd)
     loss_fn = nn.BCEWithLogitsLoss()
@@ -364,6 +396,9 @@ def train_valid(
                 _dataset = TiledDataset(
                     data_dir=_dataset_filepath,
                     crop_size=crop_size,
+                    label_size=label_size,
+                    resize=resize,
+                    interp=interp,
                     min_depth=min_depth,
                     max_depth=max_depth,
                     train=True,
@@ -388,14 +423,10 @@ def train_valid(
                         writer.add_images(f"input-images/{phase}/{_dataset_id}",
                                           images, train_step)
                         writer.add_images(f"input-labels/{phase}/{_dataset_id}",
-                                          labels * 255, train_step)
-                        writer.flush()
+                                          labels.to(dtype=torch.uint8).unsqueeze(1) * 255, train_step)
                     images = images.to(dtype=torch.float32, device=device)
                     labels = labels.to(dtype=torch.float32, device=device)
                     preds = model(images)
-                    if writer and log_images:
-                        writer.add_images(f"input-images/{phase}/{_dataset_id}",
-                                          preds, train_step)
                     loss = loss_fn(preds, labels)
                     optimizer.zero_grad()
                     loss.backward()
@@ -405,7 +436,11 @@ def train_valid(
                     if writer:
                         writer.add_scalar(_loss_name, loss.item(), train_step)
                     with torch.no_grad():
-                        score += dice_score(preds, torch.sigmoid(labels) > threshold)
+                        preds = (torch.sigmoid(preds) > threshold).to(dtype=torch.uint8)
+                        score += dice_score(preds, labels)
+                        if writer and log_images:
+                            writer.add_images(f"output-preds/{phase}/{_dataset_id}",
+                                            preds.unsqueeze(1) * 255, train_step)
                 score /= len(_dataloader)
                 if writer:
                     writer.add_scalar(f"Dice/{phase}/{_dataset_id}", score, train_step)
@@ -420,6 +455,8 @@ def train_valid(
                             f"model_{run_name}_best_{_dataset_id}.pth")
                         print(f"Saving model to {_model_filepath}")
                         torch.save(model.state_dict(), _model_filepath)
+                # Flush ever batch
+                writer.flush()
         # Flush writer every epoch
         writer.flush()
     writer.close()
@@ -432,6 +469,10 @@ def eval(
     # Model
     model: str = "vit_b",
     weights_filepath: str = "path/to/model.pth",
+    num_channels: int = 256,
+    hidden_dim1: int = 128,
+    hidden_dim2: int = 64,
+    dropout_prob: int = 0.2,
     # Evaluation
     device: str = None,
     batch_size: int = 2,
@@ -445,7 +486,10 @@ def eval(
     # Dataset
     eval_on: str = '123',
     resize: float = 1.0,
-    crop_size: Tuple[int] = (3, 256, 256),
+    interp: str = "bilinear",
+    num_samples_eval: int = 1000,
+    crop_size: Tuple[int] = (256, 256),
+    label_size: Tuple[int] = (8, 8),
     min_depth: int = 0,
     max_depth: int = 60,
     **kwargs,
@@ -454,10 +498,14 @@ def eval(
 
     # device = "cpu"
     sam_model = sam_model_registry[model](checkpoint=weights_filepath)
-    model = ClassyModel(sam_model.image_encoder)
-    model.train()
-    for param in model.image_encoder.parameters():
-        param.requires_grad = False
+    model = ClassyModel(
+        image_encoder=sam_model.image_encoder,
+        label_size = label_size,
+        num_channels = num_channels,
+        hidden_dim1 = hidden_dim1,
+        hidden_dim2 = hidden_dim2,
+        dropout_prob = dropout_prob,
+    )
     model.to(device=device)
     model = model.eval()
 
@@ -476,8 +524,10 @@ def eval(
             best_score_dict[_score_name] = 0
         _dataset = TiledDataset(
             data_dir=_dataset_filepath,
-            resize=resize,
             crop_size=crop_size,
+            label_size=label_size,
+            resize=resize,
+            interp=interp,
             min_depth=min_depth,
             max_depth=max_depth,
             train=True,
@@ -486,12 +536,18 @@ def eval(
         _dataloader = DataLoader(
             dataset=_dataset,
             batch_size=batch_size,
-            sampler = SequentialSampler(_dataset),
+            # sampler = SequentialSampler(_dataset),
+            sampler = RandomSampler(
+                _dataset,
+                num_samples=num_samples_eval,
+                # Generator with constant seed for reproducibility during eval
+                generator=torch.Generator().manual_seed(42),
+            ),
             pin_memory=True,
         )
         
         # Make a blank prediction image
-        pred_image = np.zeros(_dataset.resized_size, dtype=np.float32).T
+        pred_image = np.zeros(_dataset.resized_size, dtype=np.float32)
         print(f"Pred image {_dataset_id} shape: {pred_image.shape}")
         print(f"Pred image min: {pred_image.min()}, max: {pred_image.max()}")
 
@@ -510,12 +566,14 @@ def eval(
             # Iterate through each image and prediction in the batch
             for j, pred in enumerate(preds):
                 pixel_index = _dataset.mask_indices[i * batch_size + j]
-                pred_image[pixel_index[0], pixel_index[1]] = pred
+                pred_image[
+                    pixel_index[0] - label_size[0] : pixel_index[0] + label_size[0],
+                    pixel_index[1] - label_size[1] : pixel_index[1] + label_size[1],
+                ] = pred
 
         if writer is not None:
             print("Writing prediction image to TensorBoard...")
-            writer.add_image(f'pred_{_dataset_id}',
-                             np.expand_dims(pred_image, axis=0))
+            writer.add_image(f'pred_{_dataset_id}', np.expand_dims(pred_image, axis=0))
 
         if save_histograms:
             # Save histogram of predictions as image
@@ -540,17 +598,16 @@ def eval(
                 writer.add_histogram(f'pred_{_dataset_id}', pred_image)
 
         # Resize pred_image to original size
-        img = Image.fromarray(pred_image * 255).convert('1')
-        img = img.resize((
-            _dataset_id.original_size[0],
-            _dataset_id.original_size[1],
-        ),
-                         resample=Image.BICUBIC)
+        if resize != 1.0:
+            img = Image.fromarray(pred_image * 255).convert('1')
+            img = img.resize((
+                _dataset_id.original_size[0],
+                _dataset_id.original_size[1],
+            ), resample=INTERPOLATION_MODES[interp])
 
         if save_pred_img:
             print("Saving prediction image...")
-            _image_filepath = os.path.join(output_dir,
-                                           f"pred_{_dataset_id}.png")
+            _image_filepath = os.path.join(output_dir, f"pred_{_dataset_id}.png")
             img.save(_image_filepath)
 
         if postproc_kernel is not None:
@@ -561,8 +618,7 @@ def eval(
 
         if save_pred_img:
             print("Saving prediction image...")
-            _image_filepath = os.path.join(output_dir,
-                                           f"pred_{_dataset_id}_post.png")
+            _image_filepath = os.path.join(output_dir, f"pred_{_dataset_id}_post.png")
             img.save(_image_filepath)
 
         if save_submit_csv:

@@ -46,7 +46,25 @@ HYPERPARAMS = {
         # 'vit_h|sam_vit_h_4b8939.pth',
         # 'vit_l|sam_vit_l_0b3195.pth',
     ]),
-
+    'freeze': hp.choice('freeze', [
+        True,
+        # False, # Uses up too much memory
+    ]),
+    "hidden_dim1" : hp.choice("hidden_dim1", [
+        256,
+        128,
+        64,
+    ]),
+    "hidden_dim2" : hp.choice("hidden_dim2", [
+        256,
+        128,
+        64,
+    ]),
+    "dropout_prob" : hp.choice("dropout_prob", [
+        0.5,
+        0.2,
+        0,
+    ]),
     # Dataset
     'curriculum': hp.choice('curriculum', [
         '1', # Depth of 1 - 40/45
@@ -76,8 +94,8 @@ HYPERPARAMS = {
         42, # Universal Harmonics
     ]),
     'lr_sched': hp.choice('lr_sched', [
-        'cosine',
-        'gamma',
+        # 'cosine',
+        # 'gamma',
         'flat',
     ]),
     # Training

@@ -84,13 +84,12 @@ def dice_score(preds, label, beta=0.5, epsilon=1e-6):
     _score = (1 + beta * beta) * (p * r) / (beta * beta * p + r + epsilon)
     return _score
 
+
 class TiledDataset(Dataset):
     def __init__(
         self,
         # Directory containing the dataset
         data_dir: str,
-        # Number of random crops to take from fragment volume
-        dataset_size: int = 2,
         # Filenames of the images we'll use
         image_mask_filename="mask.png",
         image_labels_filename="inklabels.png",
@@ -109,7 +108,6 @@ class TiledDataset(Dataset):
         device: str = "cuda",
     ):
         print(f"Making TiledDataset Dataset from {data_dir}")
-        self.dataset_size = dataset_size
         self.train = train
         self.device = device
 
@@ -132,7 +130,8 @@ class TiledDataset(Dataset):
         self.encoder_size = encoder_size
         # Open Label image
         if self.train:
-            _image_labels_filepath = os.path.join(data_dir, image_labels_filename)
+            _image_labels_filepath = os.path.join(data_dir,
+                                                  image_labels_filename)
             labels_image = Image.open(_image_labels_filepath).convert("L")
             self.labels = np.array(labels_image, dtype=np.uint8)
 
@@ -143,14 +142,19 @@ class TiledDataset(Dataset):
             self.num_slices,
             self.original_size[0],
             self.original_size[1],
-        ), dtype=np.float32)
+        ),
+                                 dtype=np.float32)
         _slice_dir = os.path.join(data_dir, slices_dir_filename)
-        for i in tqdm(range(min_depth, max_depth), postfix='converting slices'):
+        for i in tqdm(range(min_depth, max_depth),
+                      postfix='converting slices'):
             _slice_filepath = os.path.join(_slice_dir, f"{i:02d}.tif")
             slice_img = Image.open(_slice_filepath).convert("F")
             self.fragment[i, :, :] = np.array(slice_img) / 65535.0
         # Pin the fragment to the device
         # self.fragment = torch.from_numpy(self.fragment).to(device=self.device)
+
+        # Indices for pixels within mask
+        self.mask_indices = torch.nonzero(self.mask).to(torch.int32)
 
         # Sample random crops within the image
         self.indices = np.zeros((dataset_size, 2, 2), dtype=np.int64)
@@ -166,6 +170,8 @@ class TiledDataset(Dataset):
                 start_height + self.crop_size[1],
                 start_width + self.crop_size[2],
             ]
+
+        # TODO: Sample all crops within the image that are centered on the mask
 
     def __len__(self):
         return self.dataset_size
@@ -186,54 +192,52 @@ class TiledDataset(Dataset):
         n_cols = int(np.ceil(len(tiles) / n_rows))
 
         # Initialize a larger array of 3xNxN
-        tiled_image = np.zeros((3, n_rows * self.crop_size[1], n_cols * self.crop_size[2]))
+        tiled_image = np.zeros(
+            (3, n_rows * self.crop_size[1], n_cols * self.crop_size[2]))
 
         # Lay out the tiles left to right, top to bottom into the larger array
         for idx, tile in enumerate(tiles):
             row = idx // n_cols
             col = idx % n_cols
             tiled_image[:,
-                row * self.crop_size[1]:(row + 1) * self.crop_size[1],
-                col * self.crop_size[2]:(col + 1) * self.crop_size[2],
-            ] = tile
+                        row * self.crop_size[1]:(row + 1) * self.crop_size[1],
+                        col * self.crop_size[2]:(col + 1) *
+                        self.crop_size[2], ] = tile
 
         # Normalize image
         tiled_image = (tiled_image - self.pixel_mean) / self.pixel_std
 
         if self.train:
-            label = self.labels[
-                start[0] + self.crop_size[1] // 2,
-                start[1] + self.crop_size[2] // 2,
-            ]
+            label = self.labels[start[0] + self.crop_size[1] // 2,
+                                start[1] + self.crop_size[2] // 2, ]
             return tiled_image, label
         else:
             return tiled_image
 
 
 class ClassyModel(nn.Module):
-    def __init__(self, image_encoder, num_channels=256, hidden_dim1=128, hidden_dim2=64, dropout_prob=0.2):
+    def __init__(self,
+                 image_encoder,
+                 num_channels=256,
+                 hidden_dim1=128,
+                 hidden_dim2=64,
+                 dropout_prob=0.2):
         super(ClassyModel, self).__init__()
         # Outputs a (batch_size, 256, 64, 64)
         self.image_encoder = image_encoder
 
         # Add the classifier head
         self.classifier_head = nn.Sequential(
-            nn.AdaptiveAvgPool2d((1, 1)),
-            nn.Flatten(),
-            nn.Linear(num_channels, hidden_dim1),
-            nn.LayerNorm(hidden_dim1),
-            nn.GELU(),
-            nn.Dropout(dropout_prob),
-            nn.Linear(hidden_dim1, hidden_dim2),
-            nn.LayerNorm(hidden_dim2),
-            nn.GELU(),
-            nn.Dropout(dropout_prob),
-            nn.Linear(hidden_dim2, 1)
-        )
+            nn.AdaptiveAvgPool2d((1, 1)), nn.Flatten(),
+            nn.Linear(num_channels, hidden_dim1), nn.LayerNorm(hidden_dim1),
+            nn.GELU(), nn.Dropout(dropout_prob),
+            nn.Linear(hidden_dim1, hidden_dim2), nn.LayerNorm(hidden_dim2),
+            nn.GELU(), nn.Dropout(dropout_prob), nn.Linear(hidden_dim2, 1))
 
     def forward(self, x):
         x = self.image_encoder(x)  # Get features from the pre-trained model
-        x = self.classifier_head(x)  # Pass the features through the classifier head
+        x = self.classifier_head(
+            x)  # Pass the features through the classifier head
         return x
 
 
@@ -293,7 +297,6 @@ def train_valid(
                     best_score_dict[_score_name] = 0
                 _dataset = TiledDataset(
                     data_dir=_dataset_filepath,
-                    dataset_size=num_samples,
                     crop_size=crop_size,
                     min_depth=min_depth,
                     max_depth=max_depth,
@@ -303,7 +306,12 @@ def train_valid(
                 _dataloader = DataLoader(
                     dataset=_dataset,
                     batch_size=batch_size,
-                    shuffle=True,
+                    sampler = RandomSampler(
+                        data_dir,
+                        num_samples=num_samples,
+                        # Generator with constant seed for reproducibility during validation
+                        generator=torch.Generator().manual_seed(42) if phase == "Valid" else None,
+                    ),
                     pin_memory=True,
                 )
                 _loader = tqdm(_dataloader)
@@ -346,6 +354,7 @@ def train_valid(
     writer.close()
     return best_score_dict
 
+
 def eval(
     output_dir: str = None,
     eval_dir: str = None,
@@ -353,7 +362,9 @@ def eval(
     model: str = "vit_b",
     weights_filepath: str = "path/to/model.pth",
     # Evaluation
+    eval_on: str = '123',
     device: str = None,
+    batch_size: int = 2,
     threshold: float = 0.5,
     postproc_kernel: int = 3,
     log_images: bool = False,
@@ -384,67 +395,63 @@ def eval(
             # Write header
             f.write("Id,Predicted\n")
 
-    # Baseline is to use image mask to create guess submission
-    for subtest_name in os.listdir(eval_dir):
-
-        # Name of sub-directory inside test dir
-        subtest_filepath = os.path.join(eval_dir, subtest_name)
-
-        # Evaluation dataset
-        eval_dataset = PatchDataset(
-            # Directory containing the dataset
-            subtest_filepath,
-            # Expected slices per fragment
-            slice_depth=slice_depth,
-            # Size of an individual patch
-            patch_size_x=patch_size_x,
-            patch_size_y=patch_size_y,
-            # Image resize ratio
-            resize_ratio=resize_ratio,
-            interpolation=interpolation,
-            # Training vs Testing mode
-            train=False,
+    best_score_dict: Dict[str, float] = {}
+    for _dataset_id in eval_on:
+        _dataset_filepath = os.path.join(eval_dir, _dataset_id)
+        print(f"Evaluate on {_dataset_filepath} ...")
+        _score_name = f"Dice/Eval/{_dataset_id}"
+        if _score_name not in best_score_dict:
+            best_score_dict[_score_name] = 0
+        _dataset = TiledDataset(
+            data_dir=_dataset_filepath,
+            crop_size=crop_size,
+            min_depth=min_depth,
+            max_depth=max_depth,
+            train=True,
+            device=device,
         )
-        img_transforms = transforms.Compose([
-            transforms.Normalize(eval_dataset.mean, eval_dataset.std),
-        ])
-
-        # DataLoaders
-        eval_dataloader = DataLoader(
-            eval_dataset,
+        _dataloader = DataLoader(
+            dataset=_dataset,
             batch_size=batch_size,
-            sampler=SequentialSampler(eval_dataset),
-            num_workers=num_workers,
-            # This will make it go faster if it is loaded into a GPU
+            sampler = SequentialSampler(_dataset),
             pin_memory=True,
         )
-
+        
         # Make a blank prediction image
-        pred_image = np.zeros(eval_dataset.resized_size, dtype=np.float32).T
-        print(f"Pred image {subtest_name} shape: {pred_image.shape}")
+        pred_image = np.zeros(_dataset.resized_size, dtype=np.float32).T
+        print(f"Pred image {_dataset_id} shape: {pred_image.shape}")
         print(f"Pred image min: {pred_image.min()}, max: {pred_image.max()}")
 
-        for i, patch in enumerate(tqdm(eval_dataloader, postfix=f"Eval {subtest_name}")):
-            patch = patch.to(device)
-            patch = img_transforms(patch)
+        _loader = tqdm(_dataloader, postfix=f"Eval {_dataset_id}"))
+        for images, labels in _loader:
+            train_step += 1
+            if writer and log_images:
+                writer.add_images(f"input-image/Eval/{_dataset_id}",
+                                    images * 255, train_step)
             with torch.no_grad():
-                preds = model(patch)
+                images = images.to(dtype=torch.float32, device=device)
+                labels = labels.to(dtype=torch.float32, device=device)
+                preds = model(images)
                 preds = torch.sigmoid(preds)
 
             # Iterate through each image and prediction in the batch
             for j, pred in enumerate(preds):
-                pixel_index = eval_dataset.mask_indices[i * batch_size + j]
+                pixel_index = _dataset.mask_indices[i * batch_size + j]
                 pred_image[pixel_index[0], pixel_index[1]] = pred
 
         if writer is not None:
             print("Writing prediction image to TensorBoard...")
-            writer.add_image(f'pred_{subtest_name}', np.expand_dims(pred_image, axis=0))
+            writer.add_image(f'pred_{_dataset_id}',
+                             np.expand_dims(pred_image, axis=0))
 
         if save_histograms:
             # Save histogram of predictions as image
             print("Saving prediction histogram...")
             _num_bins = 100
-            np_hist, _ = np.histogram(pred_image.flatten(), bins=_num_bins, range=(0, 1), density=True)
+            np_hist, _ = np.histogram(pred_image.flatten(),
+                                      bins=_num_bins,
+                                      range=(0, 1),
+                                      density=True)
             np_hist = np_hist / np_hist.sum()
             hist = np.zeros((_num_bins, 100), dtype=np.uint8)
             for bin in range(_num_bins):
@@ -452,24 +459,25 @@ def eval(
                 hist[bin, 0:_height] = 255
             hist_img = Image.fromarray(hist)
             _histogram_filepath = os.path.join(
-                output_dir, f"pred_{subtest_name}_histogram.png")
+                output_dir, f"pred_{_dataset_id}_histogram.png")
             hist_img.save(_histogram_filepath)
 
             if writer is not None:
                 print("Writing prediction histogram to TensorBoard...")
-                writer.add_histogram(f'pred_{subtest_name}', pred_image)
+                writer.add_histogram(f'pred_{_dataset_id}', pred_image)
 
         # Resize pred_image to original size
         img = Image.fromarray(pred_image * 255).convert('1')
         img = img.resize((
-            eval_dataset.original_size[0],
-            eval_dataset.original_size[1],
-        ), resample=INTERPOLATION_MODES[interpolation])
+            _dataset_id.original_size[0],
+            _dataset_id.original_size[1],
+        ),
+                         resample=Image.BICUBIC)
 
         if save_pred_img:
             print("Saving prediction image...")
-            _image_filepath = os.path.join(
-                output_dir, f"pred_{subtest_name}.png")
+            _image_filepath = os.path.join(output_dir,
+                                           f"pred_{_dataset_id}.png")
             img.save(_image_filepath)
 
         if postproc_kernel is not None:
@@ -480,8 +488,8 @@ def eval(
 
         if save_pred_img:
             print("Saving prediction image...")
-            _image_filepath = os.path.join(
-                output_dir, f"pred_{subtest_name}_post.png")
+            _image_filepath = os.path.join(output_dir,
+                                           f"pred_{_dataset_id}_post.png")
             img.save(_image_filepath)
 
         if save_submit_csv:
@@ -489,20 +497,13 @@ def eval(
             img = np.array(img).flatten()
             # Convert image to binary using threshold
             img = np.where(img > threshold, 1, 0).astype(np.uint8)
-            # Convert image to RLE
-            # start_time = time.time()
-            # inklabels_rle_original = image_to_rle(img)
-            # print(f"RLE conversion (ORIGINAL) took {time.time() - start_time:.2f} seconds")
-            start_time = time.time()
             inklabels_rle_fast = image_to_rle_fast(img)
-            print(f"RLE conversion (FAST) took {time.time() - start_time:.2f} seconds")
-            # assert inklabels_rle_original == inklabels_rle_fast, "RLE conversion is not the same!"
             with open(submission_filepath, 'a') as f:
-                f.write(f"{subtest_name},{inklabels_rle_fast}\n")
+                f.write(f"{_dataset_id},{inklabels_rle_fast}\n")
 
     if save_pred_img and save_submit_csv:
-        save_rle_as_image(submission_filepath, output_dir,
-                          subtest_name, pred_image.shape)
+        save_rle_as_image(submission_filepath, output_dir, _dataset_id,
+                          pred_image.shape)
 
 
 def eval_from_episode_dir(

@@ -48,10 +48,15 @@ HYPERPARAMS = {
         10,
     ]),
     'crop_size_str': hp.choice('crop_size_str', [
-        '3.256.256', # The beautiful harmonics of the universe, this tiles perfectly with a depth of 42
+        '256.256', # The beautiful harmonics of the universe, this tiles perfectly with a depth of 42
     ]),
     'max_depth': hp.choice('max_depth', [
         42,
+    ]),
+    'lr_sched': hp.choice('lr_sched', [
+        'cosine',
+        'gamma',
+        'flat',
     ]),
     # Training
     'batch_size' : 2,

@@ -11,8 +11,10 @@ import PIL.Image as Image
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.optim.lr_scheduler import 
 import yaml
 from PIL import Image, ImageFilter
+from torch.optim.lr_scheduler import LambdaLR
 from segment_anything import SamAutomaticMaskGenerator, sam_model_registry
 from segment_anything.modeling import (ImageEncoderViT, MaskDecoder,
                                        PromptEncoder, Sam)
@@ -85,6 +87,13 @@ def dice_score(preds, label, beta=0.5, epsilon=1e-6):
     return _score
 
 
+# Types of interpolation used in resizing
+INTERPOLATION_MODES = {
+    'bilinear': Image.BILINEAR,
+    'bicubic': Image.BICUBIC,
+    'nearest': Image.NEAREST,
+}
+
 class TiledDataset(Dataset):
     def __init__(
         self,
@@ -96,9 +105,11 @@ class TiledDataset(Dataset):
         slices_dir_filename="surface_volume",
         ir_image_filename="ir.png",
         pixel_stat_filename="pixel_stats.yaml",
+        resize: float = 1.0,
+        interp: str = "bilinear",
         # Expected slices per fragment
-        crop_size: Tuple[int] = (3, 256, 256),
-        encoder_size: Tuple[int] = (3, 1024, 1024),
+        crop_size: Tuple[int] = (256, 256),
+        encoder_size: Tuple[int] = (1024, 1024),
         # Depth into scan to take label from
         min_depth: int = 0,
         max_depth: int = 42,
@@ -110,6 +121,8 @@ class TiledDataset(Dataset):
         print(f"Making TiledDataset Dataset from {data_dir}")
         self.train = train
         self.device = device
+        self.crop_size = crop_size
+        self.encoder_size = encoder_size
 
         # Pixel stats for ir image, only for values inside mask
         _pixel_stats_filepath = os.path.join(data_dir, pixel_stat_filename)
@@ -124,22 +137,21 @@ class TiledDataset(Dataset):
         # Open Mask image
         _image_mask_filepath = os.path.join(data_dir, image_mask_filename)
         mask_image = Image.open(_image_mask_filepath).convert("L")
-        self.mask = np.array(mask_image, dtype=np.uint8)
-        self.original_size = self.mask.shape
-        self.crop_size = crop_size
-        self.encoder_size = encoder_size
+        self.original_size = self.mask_image.size
+        self.resized_size = [self.original_size[0] * resize, self.original_size[1] * resize]
+        mask_image = mask_image.resize(self.resized_size, resample=INTERPOLATION_MODES[interp])
+        mask = np.array(mask_image, dtype=np.uint8)
         # Open Label image
         if self.train:
-            _image_labels_filepath = os.path.join(data_dir,
-                                                  image_labels_filename)
+            _image_labels_filepath = os.path.join(data_dir,image_labels_filename)
             labels_image = Image.open(_image_labels_filepath).convert("L")
+            labels_image = labels_image.resize(self.resized_size, resample=INTERPOLATION_MODES[interp])
             self.labels = np.array(labels_image, dtype=np.uint8)
 
-        # Slices
-        self.num_slices = max_depth - min_depth
         # Open Slices into numpy array
+        self.crop_depth = max_depth - min_depth,
         self.fragment = np.zeros((
-            self.num_slices,
+            self.crop_depth,
             self.original_size[0],
             self.original_size[1],
         ),
@@ -149,60 +161,40 @@ class TiledDataset(Dataset):
                       postfix='converting slices'):
             _slice_filepath = os.path.join(_slice_dir, f"{i:02d}.tif")
             slice_img = Image.open(_slice_filepath).convert("F")
+            slice_img = slice_img.resize(self.resized_size, resample=INTERPOLATION_MODES[interp])
             self.fragment[i, :, :] = np.array(slice_img) / 65535.0
-        # Pin the fragment to the device
-        # self.fragment = torch.from_numpy(self.fragment).to(device=self.device)
+            # Pad the fragment using crop size
+            self.fragment = np.pad(self.fragment, ((0, 0), (crop_size[0], crop_size[0]), (crop_size[1], crop_size[1])), mode='symmetric')
 
-        # Indices for pixels within mask
-        self.mask_indices = torch.nonzero(self.mask).to(torch.int32)
+        # First index where mask is 1
+        self.mask_indices = np.where(mask == 1)
 
-        # Sample random crops within the image
-        self.indices = np.zeros((dataset_size, 2, 2), dtype=np.int64)
-        for i in range(dataset_size):
-            # Select a random starting point
-            start_height = np.random.randint(
-                0, self.original_size[0] - self.crop_size[1])
-            start_width = np.random.randint(
-                0, self.original_size[1] - self.crop_size[2])
-            self.indices[i, 0, :] = [start_height, start_width]
-            # End point is start point + crop size
-            self.indices[i, 1, :] = [
-                start_height + self.crop_size[1],
-                start_width + self.crop_size[2],
-            ]
-
-        # TODO: Sample all crops within the image that are centered on the mask
 
     def __len__(self):
-        return self.dataset_size
+        return self.len(self.mask_indices[0])
 
     def __getitem__(self, idx):
-        # Start and End points for the crop in pixel space
-        start = self.indices[idx, 0, :]
-        end = self.indices[idx, 1, :]
+
+        start = self.mask_indices[0][idx]
+        end = self.mask_indices[1][idx]
 
         # Sub-volume
-        tensor = self.fragment[:, start[0]:end[0], start[1]:end[1]]
-
-        # Slice the tensor along the first dimension
-        tiles = np.split(tensor, len(tensor) // 3, axis=0)
+        _crop_half_height = self.crop_size[0] // 2
+        _crop_half_width = self.crop_size[1] // 2
+        _crop = self.fragment[:, start - _crop_half_width:start + _crop_half_width, end - _crop_half_height:end + _crop_half_height]
 
         # Calculate tileing dimmensions (square image)
-        n_rows = int(np.ceil(np.sqrt(len(tiles))))
-        n_cols = int(np.ceil(len(tiles) / n_rows))
-
+        n_tiles = int(np.ceil(self.crop_depth / 3.0))
+        n_rows = int(np.ceil(np.sqrt(n_tiles)))
+        n_cols = int(np.ceil(n_tiles / n_rows))
+        
         # Initialize a larger array of 3xNxN
-        tiled_image = np.zeros(
-            (3, n_rows * self.crop_size[1], n_cols * self.crop_size[2]))
-
-        # Lay out the tiles left to right, top to bottom into the larger array
-        for idx, tile in enumerate(tiles):
+        tiled_image = np.zeros((3, n_rows * self.crop_size[0], n_cols * self.crop_size[1]), dtype=np.float32)
+        for idx in range(n_tiles):
             row = idx // n_cols
             col = idx % n_cols
-            tiled_image[:,
-                        row * self.crop_size[1]:(row + 1) * self.crop_size[1],
-                        col * self.crop_size[2]:(col + 1) *
-                        self.crop_size[2], ] = tile
+            tiled_image[:, row * self.crop_size[0]:(row + 1) * self.crop_size[0],
+                        col * self.crop_size[1]:(col + 1) * self.crop_size[1]] = _crop[idx * 3:(idx + 1) * 3, :, :]
 
         # Normalize image
         tiled_image = (tiled_image - self.pixel_mean) / self.pixel_std
@@ -241,6 +233,24 @@ class ClassyModel(nn.Module):
         return x
 
 
+def warmup_cosine_annealing(epoch, total_epochs, warmup_epochs, eta_min=0, eta_max=1):
+    if epoch < warmup_epochs:
+        return (eta_max - eta_min) * (epoch / warmup_epochs) + eta_min
+    else:
+        T_cur = epoch - warmup_epochs
+        T_max = total_epochs - warmup_epochs
+        return eta_min + 0.5 * (eta_max - eta_min) * (1 + torch.cos(torch.tensor(T_cur / T_max * math.pi)))
+
+
+def warmup_gamma(epoch, total_epochs, warmup_epochs, gamma=0.1, eta_min=0, eta_max=1):
+    if epoch < warmup_epochs:
+        return (eta_max - eta_min) * (epoch / warmup_epochs) + eta_min
+    else:
+        T_cur = epoch - warmup_epochs
+        T_max = total_epochs - warmup_epochs
+        return eta_min + (eta_max - eta_min) * (gamma ** (T_cur / T_max))
+
+
 def train_valid(
     run_name: str = "testytest",
     output_dir: str = None,
@@ -255,14 +265,17 @@ def train_valid(
     num_samples_train: int = 2,
     num_samples_valid: int = 2,
     num_epochs: int = 2,
+    warmup_epochs: int = 0,
     batch_size: int = 1,
     optimizer: str = "adam",
     lr: float = 1e-5,
+    lr_sched = "cosine",
     wd: float = 1e-4,
     writer=None,
     log_images: bool = False,
     # Dataset
     curriculum: str = "1",
+    resize: float = 1.0,
     crop_size: Tuple[int] = (3, 256, 256),
     min_depth: int = 0,
     max_depth: int = 60,
@@ -276,10 +289,15 @@ def train_valid(
     for param in model.image_encoder.parameters():
         param.requires_grad = False
     model.to(device=device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=wd)
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr) #, weight_decay=wd)
     loss_fn = nn.BCEWithLogitsLoss()
-    # TODO: Learning rate scheduler
-    # TODO: Learning rate warmup
+    if lr_sched == "cosine":
+        _f = lambda x: warmup_cosine_annealing(x, num_epochs, warmup_epochs, eta_min=0.1 * lr, eta_max=lr)
+    elif lr_sched == "gamma":
+        _f = lambda x: warmup_gamma(x, num_epochs, warmup_epochs, gamma=0.1, eta_min=0.1 * lr, eta_max=lr)
+    else:
+        _f = lambda x: lr
+    lr_sched = LambdaLR(optimizer, _f)
 
     train_step = 0
     best_score_dict: Dict[str, float] = {}
@@ -331,13 +349,11 @@ def train_valid(
                     _loss_name = f"{loss_fn.__class__.__name__}/{phase}/{_dataset_id}"
                     _loader.set_postfix_str(f"{_loss_name}: {loss.item():.4f}")
                     if writer:
-                        writer.add_scalar(f"{_loss_name}", loss.item(),
-                                          train_step)
-
+                        writer.add_scalar(_loss_name, loss.item(), train_step)
                     score += dice_score(preds, labels)
                 score /= len(_dataloader)
                 if writer:
-                    writer.add_scalar(f"Dice/{phase}", score, train_step)
+                    writer.add_scalar(f"Dice/{phase}/{_dataset_id}", score, train_step)
                 # Overwrite best score if it is better
                 if score > best_score_dict[_score_name]:
                     print(f"New best score! {score:.4f} ")
@@ -362,7 +378,6 @@ def eval(
     model: str = "vit_b",
     weights_filepath: str = "path/to/model.pth",
     # Evaluation
-    eval_on: str = '123',
     device: str = None,
     batch_size: int = 2,
     threshold: float = 0.5,
@@ -373,6 +388,8 @@ def eval(
     save_histograms: bool = False,
     writer=None,
     # Dataset
+    eval_on: str = '123',
+    resize: float = 1.0,
     crop_size: Tuple[int] = (3, 256, 256),
     min_depth: int = 0,
     max_depth: int = 60,
@@ -404,6 +421,7 @@ def eval(
             best_score_dict[_score_name] = 0
         _dataset = TiledDataset(
             data_dir=_dataset_filepath,
+            resize=resize,
             crop_size=crop_size,
             min_depth=min_depth,
             max_depth=max_depth,

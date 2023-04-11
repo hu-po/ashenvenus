@@ -17,14 +17,14 @@ if os.name == 'nt':
 else:
     print("Linux Computer Detected")
     ROOT_DIR = "/home/tren/dev/"
-    DATA_DIR = "/home/tren/dev/ashenvenus/data"
+    DATA_DIR = "/home/tren/dev/ashenvenus/data/split"
     MODEL_DIR = "/home/tren/dev/ashenvenus/models"
     OUTPUT_DIR = "/home/tren/dev/ashenvenus/output"
 
 # Define the search space
 HYPERPARAMS = {
-    'train_dir_name' : 'split_train',
-    'valid_dir_name' : 'split_valid',
+    'train_dir_name' : 'train',
+    'valid_dir_name' : 'valid',
     # Model
     'model_str': hp.choice('model_str', [
         'vit_b|sam_vit_b_01ec64.pth',
@@ -41,11 +41,11 @@ HYPERPARAMS = {
     ]),
     'num_samples_train': hp.choice('num_samples_train', [
         # 2,
-        8000,
+        200,
     ]),
     'num_samples_valid': hp.choice('num_samples_valid', [
         # 2,
-        100,
+        10,
     ]),
     'crop_size_str': hp.choice('crop_size_str', [
         '3.256.256', # The beautiful harmonics of the universe, this tiles perfectly with a depth of 42
@@ -55,7 +55,7 @@ HYPERPARAMS = {
     ]),
     # Training
     'batch_size' : 2,
-    'num_epochs': hp.choice('num_epochs', [2]),
+    'num_epochs': hp.choice('num_epochs', [32]),
     'lr': hp.loguniform('lr',np.log(0.00001), np.log(0.01)),
     'wd': hp.choice('wd', [
         1e-4,
@@ -116,6 +116,11 @@ def sweep_episode(hparams) -> float:
 
 if __name__ == "__main__":
 
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--seed', type=int, default=42)
+    args = parser.parse_args()
+    
     # Clean output dir    
     shutil.rmtree(OUTPUT_DIR, ignore_errors=True)
 
@@ -124,5 +129,5 @@ if __name__ == "__main__":
         space=HYPERPARAMS,
         algo=tpe.suggest,
         max_evals=100,
-        rstate=np.random.Generator(np.random.PCG64(42)),
+        rstate=np.random.Generator(np.random.PCG64(args.seed)),
     )

@@ -160,17 +160,10 @@ class TiledDataset(Dataset):
             if self.resize != 1.0:
                 labels_image = labels_image.resize(self.resized_size[::-1], resample=INTERPOLATION_MODES[interp])
             labels = np.array(labels_image, dtype=np.uint8) / 255.0
-            # Pad the labels using label size
-            self.labels = np.pad(
-                labels,
-                ((self.label_half_height, self.label_half_height),
-                 (self.label_half_width, self.label_half_width)),
-                mode="constant",
-                constant_values=0,
-            )
+
         # Open Slices into numpy array
         self.crop_depth = max_depth - min_depth
-        self.fragment = np.zeros((
+        fragment = np.zeros((
             self.crop_depth,
             self.original_size[0],
             self.original_size[1],
@@ -183,9 +176,7 @@ class TiledDataset(Dataset):
             slice_img = Image.open(_slice_filepath).convert("F")
             if self.resize != 1.0:
                 slice_img = slice_img.resize(self.resized_size[::-1], resample=INTERPOLATION_MODES[interp])
-            self.fragment[i, :, :] = np.array(slice_img) / 65535.0
-        # Pad the fragment using crop size
-        self.fragment = np.pad(self.fragment, ((0, 0), (crop_size[0], crop_size[0]), (crop_size[1], crop_size[1])), mode='constant', constant_values=0.0)
+            fragment[i, :, :] = np.array(slice_img) / 65535.0
 
         if train:
             # Sample evenly from label and background
@@ -207,6 +198,22 @@ class TiledDataset(Dataset):
         else:
             self.sample_points = np.where(mask == 255)
 
+        # Pad the fragment using crop size
+        self.fragment = np.pad(
+            fragment,
+            ((0, 0), (self.crop_half_height, self.crop_half_height),
+                (self.crop_half_width, self.crop_half_width)),
+            mode='constant', constant_values=0.,
+        )
+
+        # Pad the labels using label size
+        self.labels = np.pad(
+            labels,
+            ((self.label_half_height, self.label_half_height),
+                (self.label_half_width, self.label_half_width)),
+            mode="constant", constant_values=0.,
+        )
+
     def __len__(self):
         return len(self.sample_points[0])
 
@@ -215,8 +222,8 @@ class TiledDataset(Dataset):
         crop_center_width = self.sample_points[1][idx]
 
         # Account for padding
-        crop_center_height_pad = self.crop_size[0] + crop_center_height
-        crop_center_width_pad = self.crop_size[1] + crop_center_width
+        crop_center_height_pad = self.crop_half_height + crop_center_height
+        crop_center_width_pad = self.crop_half_width + crop_center_width
         # Crop the fragment
         crop = self.fragment[:, 
             crop_center_height_pad - self.crop_half_height:crop_center_height_pad + self.crop_half_height,
@@ -251,9 +258,12 @@ class TiledDataset(Dataset):
         tiled_image = (tiled_image - self.pixel_mean) / self.pixel_std
 
         if self.train:
+            # Account for padding
+            crop_center_height_pad = crop_center_height + self.label_half_height
+            crop_center_width_pad = crop_center_width + self.label_half_width
             return tiled_image, self.labels[
-                crop_center_height - self.label_half_height : crop_center_height + self.label_half_height,
-                crop_center_width - self.label_half_width : crop_center_width + self.label_half_width,
+                crop_center_height_pad - self.label_half_height : crop_center_height_pad + self.label_half_height,
+                crop_center_width_pad - self.label_half_width : crop_center_width_pad + self.label_half_width,
             ]
         else:
             return tiled_image

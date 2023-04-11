@@ -11,30 +11,37 @@ from tensorboardX import SummaryWriter
 
 from src import train_valid
 
-parser = argparse.ArgumentParser()
-parser.add_argument('--seed', type=int, default=42)
-
 if os.name == 'nt':
     print("Windows Computer Detected")
+    DEFAULT_BATCH_SIZE = 5
+    DEFAULT_SEED = 340
     ROOT_DIR =  "C:\\Users\\ook\\Documents\\dev"
     DATA_DIR = os.path.join(ROOT_DIR, "ashenvenus\\data\\split")
     MODEL_DIR = os.path.join(ROOT_DIR, "ashenvenus\\models")
     OUTPUT_DIR = os.path.join(ROOT_DIR, "ashenvenus\\output")
-    parser.add_argument('--batch_size', type=int, default=5)
     shutil.rmtree(OUTPUT_DIR, ignore_errors=True)
 else:
     if os.path.isdir("/home/tren"):
         print("Linux Computer 1 Detected")
         ROOT_DIR = "/home/tren/dev/"
-        parser.add_argument('--batch_size', type=int, default=2)
+        DEFAULT_BATCH_SIZE = 2
+        DEFAULT_SEED = 7
+        DATA_DIR = os.path.join(ROOT_DIR, "ashenvenus/data/split")
+        MODEL_DIR = os.path.join(ROOT_DIR, "ashenvenus/models")
+        OUTPUT_DIR = os.path.join(ROOT_DIR, "ashenvenus/output")
     elif os.path.isdir("/home/oop"):
         print("Linux Computer 2 Detected")
         ROOT_DIR = "/home/oop/dev/"
-        parser.add_argument('--batch_size', type=int, default=3)
+        DEFAULT_BATCH_SIZE = 3
+        DEFAULT_SEED = 420
+        DATA_DIR = os.path.join(ROOT_DIR, "ashenvenus/data/split")
+        MODEL_DIR = os.path.join(ROOT_DIR, "ashenvenus/models")
+        OUTPUT_DIR = os.path.join(ROOT_DIR, "ashenvenus/output")
         shutil.rmtree(OUTPUT_DIR, ignore_errors=True)
-    DATA_DIR = os.path.join(ROOT_DIR, "ashenvenus/data/split")
-    MODEL_DIR = os.path.join(ROOT_DIR, "ashenvenus/models")
-    OUTPUT_DIR = os.path.join(ROOT_DIR, "ashenvenus/output")
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--seed', type=int, default=DEFAULT_SEED)
+parser.add_argument('--batch_size', type=int, default=DEFAULT_BATCH_SIZE)
 
 # Define the search space
 HYPERPARAMS = {

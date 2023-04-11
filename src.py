@@ -138,17 +138,20 @@ class TiledDataset(Dataset):
         _image_mask_filepath = os.path.join(data_dir, image_mask_filename)
         mask_image = Image.open(_image_mask_filepath).convert("L")
         self.original_size = mask_image.height, mask_image.width
+        self.resize = resize
         self.resized_size = [
             int(self.original_size[0] * resize), 
             int(self.original_size[1] * resize),
         ]
-        mask_image = mask_image.resize(self.resized_size[::-1], resample=INTERPOLATION_MODES[interp])
+        if self.resize != 1.0:
+            mask_image = mask_image.resize(self.resized_size[::-1], resample=INTERPOLATION_MODES[interp])
         mask = np.array(mask_image, dtype=np.uint8)
         # Open Label image
         if self.train:
             _image_labels_filepath = os.path.join(data_dir,image_labels_filename)
             labels_image = Image.open(_image_labels_filepath).convert("L")
-            labels_image = labels_image.resize(self.resized_size[::-1], resample=INTERPOLATION_MODES[interp])
+            if self.resize != 1.0:
+                labels_image = labels_image.resize(self.resized_size[::-1], resample=INTERPOLATION_MODES[interp])
             self.labels = np.array(labels_image, dtype=np.uint8) / 255.0
 
         # Open Slices into numpy array
@@ -164,17 +167,17 @@ class TiledDataset(Dataset):
                       postfix='converting slices'):
             _slice_filepath = os.path.join(_slice_dir, f"{i:02d}.tif")
             slice_img = Image.open(_slice_filepath).convert("F")
-            slice_img = slice_img.resize(self.resized_size[::-1], resample=INTERPOLATION_MODES[interp])
+            if self.resize != 1.0:
+                slice_img = slice_img.resize(self.resized_size[::-1], resample=INTERPOLATION_MODES[interp])
             self.fragment[i, :, :] = np.array(slice_img) / 65535.0
         # Pad the fragment using crop size
-        self.fragment = np.pad(self.fragment, ((0, 0), (crop_size[0], crop_size[0]), (crop_size[1], crop_size[1])), mode='symmetric')
+        self.fragment = np.pad(self.fragment, ((0, 0), (crop_size[0], crop_size[0]), (crop_size[1], crop_size[1])), mode='constant', constant_values=0.0)
 
         # First index where mask is 1
         self.sample_points = np.where(mask == 255)
 
-
     def __len__(self):
-        return self.len(self.sample_points[0])
+        return len(self.sample_points[0])
 
     def __getitem__(self, idx):
         crop_center_height = self.sample_points[0][idx]
@@ -182,12 +185,12 @@ class TiledDataset(Dataset):
         crop_half_height = self.crop_size[0] // 2
         crop_half_width = self.crop_size[1] // 2
         # Account for padding
-        crop_center_height += self.crop_size[0]
-        crop_center_width += self.crop_size[1]
+        crop_center_height_pad = self.crop_size[0] + crop_center_height
+        crop_center_width_pad = self.crop_size[1] + crop_center_width
         # Crop the fragment
         crop = self.fragment[:, 
-            crop_center_height - crop_half_height:crop_center_height + crop_half_height,
-            crop_center_width - crop_half_width:crop_center_width + crop_half_width,
+            crop_center_height_pad - crop_half_height:crop_center_height_pad + crop_half_height,
+            crop_center_width_pad - crop_half_width:crop_center_width_pad + crop_half_width,
         ]
 
         # Calculate tileing dimmensions (square image)
@@ -200,17 +203,22 @@ class TiledDataset(Dataset):
         for idx in range(n_tiles):
             row = idx // n_cols
             col = idx % n_cols
-            tiled_image[:, row * self.crop_size[0]:(row + 1) * self.crop_size[0],
-                        col * self.crop_size[1]:(col + 1) * self.crop_size[1]] = crop[idx * 3:(idx + 1) * 3, :, :]
+            # Fill in the 3xNxN array with the cropped slices
+            tiled_image[:, row * self.crop_size[0]:(row + 1) * self.crop_size[0], col * self.crop_size[1]:(col + 1) * self.crop_size[1]] = crop[idx * 3:(idx + 1) * 3, :, :]
 
-        # Resize to encoder size
-        tiled_image = Image.fromarray(tiled_image, 'RGB')
-        tiled_image = tiled_image.resize(self.encoder_size[::-1], resample=INTERPOLATION_MODES[self.interp])
-        tiled_image = np.array(tiled_image, dtype=np.float32)
-        tiled_image = np.transpose(tiled_image, (2, 0, 1))/255.0
+        # # Resize to encoder size
+        if self.resize != 1.0 or \
+            tiled_image.shape[1] != self.encoder_size[0] \
+                or tiled_image.shape[2] != self.encoder_size[1]:
+            # TODO: This just seems to fuck it up, loosing information
+            tiled_image = tiled_image.transpose((1, 2, 0)) * 255.0
+            tiled_image = Image.fromarray(tiled_image, 'RGB')
+            tiled_image = tiled_image.resize(self.encoder_size[::-1], resample=INTERPOLATION_MODES[self.interp])
+            tiled_image = np.array(tiled_image, dtype=np.float32) / 255.0
+            tiled_image = np.transpose(tiled_image, (2, 0, 1))
 
         # Normalize image
-        tiled_image = (tiled_image - self.pixel_mean) / self.pixel_std
+        # tiled_image = (tiled_image - self.pixel_mean) / self.pixel_std
 
         if self.train:
             return tiled_image, self.labels[crop_center_height, crop_center_width]
@@ -337,7 +345,7 @@ def train_valid(
                     dataset=_dataset,
                     batch_size=batch_size,
                     sampler = RandomSampler(
-                        data_dir,
+                        _dataset,
                         num_samples=num_samples,
                         # Generator with constant seed for reproducibility during validation
                         generator=torch.Generator().manual_seed(42) if phase == "Valid" else None,
@@ -351,6 +359,7 @@ def train_valid(
                     if writer and log_images:
                         writer.add_images(f"input-images/{phase}/{_dataset_id}",
                                           images, train_step)
+                        writer.flush()
                         # writer.add_images(f"input-labels/{phase}/{_dataset_id}",
                         #                   labels * 255, train_step)
                     images = images.to(dtype=torch.float32, device=device)

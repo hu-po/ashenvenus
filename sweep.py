@@ -13,7 +13,7 @@ from src import train_valid
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--seed', type=int, default=42)
-parser.add_argument('--batch_size', type=int, default=2)
+parser.add_argument('--batch_size', type=int, default=1)
 
 if os.name == 'nt':
     print("Windows Computer Detected")
@@ -59,15 +59,17 @@ HYPERPARAMS = {
         10,
     ]),
     'resize': hp.choice('resize', [
-        # 1.0, # Universal Harmonics
-        0.3,
+        1.0, # Universal Harmonics
+        # 0.3,
+        # 0.3,
     ]),
     'crop_size_str': hp.choice('crop_size_str', [
-        # '256.256', # Universal Harmonics
-        '68.68',
+        '256.256', # Universal Harmonics
+        # '128.128',
+        # '68.68',
     ]),
     'max_depth': hp.choice('max_depth', [
-        42,
+        42, # Universal Harmonics
     ]),
     'lr_sched': hp.choice('lr_sched', [
         'cosine',

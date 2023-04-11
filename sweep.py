@@ -28,9 +28,9 @@ else:
     elif os.path.isdir("/home/oop"):
         print("Linux Computer 2 Detected")
         ROOT_DIR = "/home/oop/dev/"
-        DATA_DIR = os.path.join(ROOT_DIR, "ashenvenus/data/split")
-        MODEL_DIR = os.path.join(ROOT_DIR, "ashenvenus/models")
-        OUTPUT_DIR = os.path.join(ROOT_DIR, "ashenvenus/output")
+    DATA_DIR = os.path.join(ROOT_DIR, "ashenvenus/data/split")
+    MODEL_DIR = os.path.join(ROOT_DIR, "ashenvenus/models")
+    OUTPUT_DIR = os.path.join(ROOT_DIR, "ashenvenus/output")
 
 # Define the search space
 HYPERPARAMS = {

@@ -4,6 +4,7 @@ import os
 import pprint
 from io import StringIO
 from typing import Dict, Tuple, Union
+import math
 
 import cv2
 import numpy as np
@@ -465,7 +466,7 @@ def eval(
         print(f"Pred image min: {pred_image.min()}, max: {pred_image.max()}")
 
         _loader = tqdm(_dataloader, postfix=f"Eval {_dataset_id}")
-        for images, labels in _loader:
+        for i, (images, labels) in enumerate(_loader):
             train_step += 1
             if writer and log_images:
                 writer.add_images(f"input-image/Eval/{_dataset_id}",

@@ -17,8 +17,8 @@ image_ir_filename = 'ir.png'
 slices_dir_filename = 'surface_volume'
 num_slices = 50
 
-data_dir = "C:\\Users\\ook\\Documents\\dev\\ashenvenus\\data\\"
-# data_dir = '/home/tren/dev/ashenvenus/data/split/'
+# data_dir = "C:\\Users\\ook\\Documents\\dev\\ashenvenus\\data\\"
+data_dir = '/home/tren/dev/ashenvenus/data/split/'
 
 # Find all nested sub directories that contain an image mask image
 dataset_dirs = []
@@ -103,7 +103,7 @@ for dataset_dir in dataset_dirs:
         yaml.dump(pixel_stats, f)
 
     # Matplotlib Histogram of all pixels with lines for each type of fragment
-    # plt.hist(fragment.flatten(), bins=100, alpha=0.5, label='raw')
+    plt.figure(figsize=(10, 10))
     plt.hist(fragment_mask.flatten(), bins=100, alpha=0.5, label='mask')
     plt.hist(fragment_bg.flatten(), bins=100, alpha=0.5, label='bg')
     plt.hist(fragment_ink.flatten(), bins=100, alpha=0.5, label='ink')

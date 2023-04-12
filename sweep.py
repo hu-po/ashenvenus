@@ -73,6 +73,11 @@ HYPERPARAMS = {
         0,
     ]),
     # Dataset
+    'threshold': hp.choice('threshold', [
+        # 0.5,
+        0.2,
+        # 0.1,
+    ]),
     'curriculum': hp.choice('curriculum', [
         '1', # Depth of 1 - 40/45
         # '2', # Depth of 1 - 53/58

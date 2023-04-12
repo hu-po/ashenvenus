@@ -206,13 +206,14 @@ class TiledDataset(Dataset):
             mode='constant', constant_values=0.,
         )
 
-        # Pad the labels using label size
-        self.labels = np.pad(
-            labels,
-            ((self.label_half_height, self.label_half_height),
-                (self.label_half_width, self.label_half_width)),
-            mode="constant", constant_values=0.,
-        )
+        if train:
+            # Pad the labels using label size
+            self.labels = np.pad(
+                labels,
+                ((self.label_half_height, self.label_half_height),
+                    (self.label_half_width, self.label_half_width)),
+                mode="constant", constant_values=0.,
+            )
 
     def __len__(self):
         return len(self.sample_points[0])
@@ -257,16 +258,19 @@ class TiledDataset(Dataset):
         # Normalize image
         tiled_image = (tiled_image - self.pixel_mean) / self.pixel_std
 
+        # Centerpoint of crop in pixel space
+        centerpoint = (crop_center_height, crop_center_width)
+
         if self.train:
             # Account for padding
             crop_center_height_pad = crop_center_height + self.label_half_height
             crop_center_width_pad = crop_center_width + self.label_half_width
-            return tiled_image, self.labels[
+            return tiled_image, centerpoint, self.labels[
                 crop_center_height_pad - self.label_half_height : crop_center_height_pad + self.label_half_height,
                 crop_center_width_pad - self.label_half_width : crop_center_width_pad + self.label_half_width,
             ]
         else:
-            return tiled_image
+            return tiled_image, centerpoint
 
 
 class ClassyModel(nn.Module):
@@ -345,7 +349,7 @@ def train_valid(
     num_epochs: int = 2,
     warmup_epochs: int = 0,
     batch_size: int = 1,
-    threshold: float = 0.4,
+    threshold: float = 0.3,
     optimizer: str = "adam",
     lr: float = 1e-5,
     lr_sched = "cosine",
@@ -390,7 +394,7 @@ def train_valid(
         _f = lambda x: lr
     lr_sched = LambdaLR(optimizer, _f)
 
-    train_step = 0
+    step = 0
     best_score_dict: Dict[str, float] = {}
     for epoch in range(num_epochs):
         print(f"\n\n --- Epoch {epoch+1} of {num_epochs} --- \n\n")
@@ -430,13 +434,11 @@ def train_valid(
                 _loader = tqdm(_dataloader)
                 score = 0
                 print(f"{phase} on {_dataset_filepath} ...")
-                for images, labels in _loader:
-                    train_step += 1
+                for images, centerpoint, labels in _loader:
+                    step += 1
                     if writer and log_images:
-                        writer.add_images(f"input-images/{phase}/{_dataset_id}",
-                                          images, train_step)
-                        writer.add_images(f"input-labels/{phase}/{_dataset_id}",
-                                          labels.to(dtype=torch.uint8).unsqueeze(1) * 255, train_step)
+                        writer.add_images(f"input-images/{phase}/{_dataset_id}", images, step)
+                        writer.add_images(f"input-labels/{phase}/{_dataset_id}", labels.to(dtype=torch.uint8).unsqueeze(1) * 255, step)
                     images = images.to(dtype=torch.float32, device=device)
                     labels = labels.to(dtype=torch.float32, device=device)
                     preds = model(images)
@@ -447,16 +449,15 @@ def train_valid(
                     _loss_name = f"{loss_fn.__class__.__name__}/{phase}/{_dataset_id}"
                     _loader.set_postfix_str(f"{_loss_name}: {loss.item():.4f}")
                     if writer:
-                        writer.add_scalar(_loss_name, loss.item(), train_step)
+                        writer.add_scalar(_loss_name, loss.item(), step)
                     with torch.no_grad():
                         preds = (torch.sigmoid(preds) > threshold).to(dtype=torch.uint8)
                         score += dice_score(preds, labels)
                         if writer and log_images:
-                            writer.add_images(f"output-preds/{phase}/{_dataset_id}",
-                                            preds.unsqueeze(1) * 255, train_step)
+                            writer.add_images(f"output-preds/{phase}/{_dataset_id}", preds.unsqueeze(1) * 255, step)
                 score /= len(_dataloader)
                 if writer:
-                    writer.add_scalar(f"Dice/{phase}/{_dataset_id}", score, train_step)
+                    writer.add_scalar(f"Dice/{phase}/{_dataset_id}", score, step)
                 # Overwrite best score if it is better
                 if score > best_score_dict[_score_name]:
                     print(f"New best score! {score:.4f} ")
@@ -532,6 +533,7 @@ def eval(
             f.write("Id,Predicted\n")
 
     best_score_dict: Dict[str, float] = {}
+    step = 0
     for _dataset_id in eval_on:
         _dataset_filepath = os.path.join(eval_dir, _dataset_id)
         print(f"Evaluate on {_dataset_filepath} ...")
@@ -547,7 +549,7 @@ def eval(
             pixel_norm=pixel_norm,
             min_depth=min_depth,
             max_depth=max_depth,
-            train=True,
+            train=False,
             device=device,
         )
         _dataloader = DataLoader(
@@ -571,30 +573,37 @@ def eval(
         
         # Make a blank prediction image
         pred_image = np.zeros(_dataset.resized_size, dtype=np.float32)
-        print(f"Pred image {_dataset_id} shape: {pred_image.shape}")
-        print(f"Pred image min: {pred_image.min()}, max: {pred_image.max()}")
+        # Pad prediction with label size
+        label_size_half = (label_size[0] // 2, label_size[1] // 2)
+        pred_image = np.pad(pred_image,
+            ((label_size_half[0], label_size_half[0]), (label_size_half[1], label_size_half[1])),
+            mode='constant', constant_values=0,
+        )
 
         time_start = time.time()
         time_elapsed = 0
+        phase = "Eval"
         _loader = tqdm(_dataloader, postfix=f"Eval {_dataset_id}")
-        for i, (images, labels) in enumerate(_loader):
-            train_step += 1
+        for i, (images, centerpoint) in enumerate(_loader):
+            step += 1
             if writer and log_images:
-                writer.add_images(f"input-image/Eval/{_dataset_id}",
-                                    images * 255, train_step)
+                writer.add_images(f"input-images/{phase}/{_dataset_id}", images, step)
             with torch.no_grad():
                 images = images.to(dtype=torch.float32, device=device)
-                labels = labels.to(dtype=torch.float32, device=device)
                 preds = model(images)
                 preds = torch.sigmoid(preds)
-
-            # Iterate through each image and prediction in the batch
-            for j, pred in enumerate(preds):
-                pixel_index = _dataset.mask_indices[i * batch_size + j]
-                pred_image[
-                    pixel_index[0] - label_size[0] : pixel_index[0] + label_size[0],
-                    pixel_index[1] - label_size[1] : pixel_index[1] + label_size[1],
-                ] = pred
+                if writer and log_images:
+                    writer.add_images(f"output-preds/{phase}/{_dataset_id}", preds.unsqueeze(1) * 255, step)
+            for i, pred in enumerate(preds):
+                # centerpoint to padded pixel coords, and then size of label
+                h_s = int(centerpoint[0][i].cpu() + label_size[0] // 2 - label_size[0] // 2)
+                h_e = int(centerpoint[0][i].cpu() + label_size[0] // 2 + label_size[0] // 2)
+                w_s = int(centerpoint[1][i].cpu() + label_size[1] // 2 - label_size[1] // 2)
+                w_e = int(centerpoint[1][i].cpu() + label_size[1] // 2 + label_size[1] // 2)
+                _existing_pred = pred_image[h_s:h_e, w_s:w_e]
+                # Combine existing prediction with new prediction
+                pred = pred.cpu().numpy()
+                pred_image[h_s:h_e, w_s:w_e] = np.mean(np.stack([_existing_pred, pred]), axis=0)
             
             # Check if we have exceeded the time limit
             time_elapsed = time.time() - time_start
@@ -602,9 +611,12 @@ def eval(
                 print(f"Time limit exceeded for dataset {_dataset_id}")
                 break
 
+        # Remove padding from prediction
+        pred_image = pred_image[label_size_half[0]:-label_size_half[0], label_size_half[1]:-label_size_half[1]]
+
         if writer is not None:
             print("Writing prediction image to TensorBoard...")
-            writer.add_image(f'pred_{_dataset_id}', np.expand_dims(pred_image, axis=0))
+            writer.add_image(f'pred_{_dataset_id}', np.expand_dims(pred_image, axis=0) * 255)
 
         if save_histograms:
             # Save histogram of predictions as image
@@ -615,10 +627,10 @@ def eval(
                                       range=(0, 1),
                                       density=True)
             np_hist = np_hist / np_hist.sum()
-            hist = np.zeros((_num_bins, 100), dtype=np.uint8)
+            hist = np.zeros((100, _num_bins), dtype=np.uint8)
             for bin in range(_num_bins):
                 _height = int(np_hist[bin] * 100)
-                hist[bin, 0:_height] = 255
+                hist[0:_height, bin] = 255
             hist_img = Image.fromarray(hist)
             _histogram_filepath = os.path.join(
                 output_dir, f"pred_{_dataset_id}_histogram.png")
@@ -638,26 +650,28 @@ def eval(
 
         if save_pred_img:
             print("Saving prediction image...")
+            img = Image.fromarray(pred_image * 255).convert('1')
             _image_filepath = os.path.join(output_dir, f"pred_{_dataset_id}.png")
             img.save(_image_filepath)
 
-        if postproc_kernel is not None:
-            print("Postprocessing...")
-            # Erosion then Dilation
-            img = img.filter(ImageFilter.MinFilter(postproc_kernel))
-            img = img.filter(ImageFilter.MaxFilter(postproc_kernel))
+        # if postproc_kernel is not None:
+        #     print("Postprocessing...")
+        #     # Erosion then Dilation
+        #     img = img.filter(ImageFilter.MinFilter(postproc_kernel))
+        #     img = img.filter(ImageFilter.MaxFilter(postproc_kernel))
 
-        if save_pred_img:
-            print("Saving prediction image...")
-            _image_filepath = os.path.join(output_dir, f"pred_{_dataset_id}_post.png")
-            img.save(_image_filepath)
+        # if save_pred_img:
+        #     print("Saving prediction image...")
+        #     _image_filepath = os.path.join(output_dir, f"pred_{_dataset_id}_post.png")
+        #     img.save(_image_filepath)
 
         if save_submit_csv:
             print("Saving submission csv...")
-            img = np.array(img).flatten()
             # Convert image to binary using threshold
-            img = np.where(img > threshold, 1, 0).astype(np.uint8)
-            inklabels_rle_fast = image_to_rle_fast(img)
+            # img_thresh = np.where(pred_image > threshold, 1, 0).astype(np.uint8)
+            pred_image[pred_image > threshold] = 1
+            pred_image[pred_image <= threshold] = 0
+            inklabels_rle_fast = image_to_rle_fast(pred_image)
             with open(submission_filepath, 'a') as f:
                 f.write(f"{_dataset_id},{inklabels_rle_fast}\n")
 

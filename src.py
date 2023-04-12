@@ -26,7 +26,7 @@ from torch.optim.lr_scheduler import LambdaLR
 from torch.utils.data import (DataLoader, Dataset, RandomSampler,
                               SequentialSampler)
 from torchvision import transforms
-from tqdm.auto import tqdm
+from tqdm import tqdm
 
 
 def get_device(device: str = None):
@@ -456,9 +456,9 @@ def train_valid(
                         writer.add_scalar(_loss_name, loss.item(), step)
                     with torch.no_grad():
                         preds = (torch.sigmoid(preds) > threshold).to(dtype=torch.uint8)
-                        score += dice_score(preds, labels)
-                        if writer and log_images:
-                            writer.add_images(f"output-preds/{phase}/{_dataset_id}", preds.unsqueeze(1) * 255, step)
+                        score += dice_score(preds, labels).item()
+                    if writer and log_images:
+                        writer.add_images(f"output-preds/{phase}/{_dataset_id}", preds.unsqueeze(1) * 255, step)
                 score /= len(_dataloader)
                 if writer:
                     writer.add_scalar(f"Dice/{phase}/{_dataset_id}", score, step)

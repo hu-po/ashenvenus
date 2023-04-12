@@ -121,7 +121,7 @@ HYPERPARAMS = {
     'seed': 0,
     'batch_size' : 2,
     'num_epochs': hp.choice('num_epochs', [
-        2,
+        1,
         # 8,
     ]),
     'warmup_epochs': hp.choice('warmup_epochs', [
@@ -182,10 +182,10 @@ def sweep_episode(hparams) -> float:
             eval_on = hparams['curriculum'],
             max_num_samples_eval = 1000,
             max_time_hours = 0.008,
-            log_images = True,
+            log_images = False,
             save_pred_img = True,
-            save_submit_csv = True,
-            save_histograms = True,
+            save_submit_csv = False,
+            save_histograms = False,
             writer=writer,
             **hparams,
         )

@@ -9,7 +9,7 @@ import yaml
 from hyperopt import fmin, hp, tpe
 from tensorboardX import SummaryWriter
 
-from src import train_valid
+from src import train_valid, eval_from_episode_dir
 
 if os.name == 'nt':
     print("Windows Computer Detected")
@@ -47,6 +47,7 @@ parser.add_argument('--batch_size', type=int, default=DEFAULT_BATCH_SIZE)
 HYPERPARAMS = {
     'train_dir_name' : 'train',
     'valid_dir_name' : 'valid',
+    'eval_dir_name' : 'valid',
     # Model
     'model_str': hp.choice('model_str', [
         'vit_b|sam_vit_b_01ec64.pth',
@@ -81,12 +82,14 @@ HYPERPARAMS = {
     'curriculum': hp.choice('curriculum', [
         '1', # Depth of 1 - 40/45
         # '2', # Depth of 1 - 53/58
-        '3', # Depth of 1 - 48/53
-        '123',
+        # '3', # Depth of 1 - 48/53
+        # '123',
     ]),
     'num_samples_train': hp.choice('num_samples_train', [
-        # 2,
-        2000,
+        2,
+        # 2000,
+        # 20000,
+        # 200000,
     ]),
     'num_samples_valid': hp.choice('num_samples_valid', [
         # 2,
@@ -94,7 +97,6 @@ HYPERPARAMS = {
     ]),
     'resize': hp.choice('resize', [
         1.0, # Universal Harmonics
-        # 0.3,
         # 0.3,
     ]),
     'pixel_norm': hp.choice('pixel_norm', [
@@ -119,8 +121,8 @@ HYPERPARAMS = {
     'seed': 0,
     'batch_size' : 2,
     'num_epochs': hp.choice('num_epochs', [
-        4,
-        8,
+        2,
+        # 8,
     ]),
     'warmup_epochs': hp.choice('warmup_epochs', [
         0,
@@ -148,6 +150,7 @@ def sweep_episode(hparams) -> float:
     # Train and Validation directories
     train_dir = os.path.join(DATA_DIR, hparams['train_dir_name'])
     valid_dir = os.path.join(DATA_DIR, hparams['valid_dir_name'])
+    eval_dir = os.path.join(DATA_DIR, hparams['eval_dir_name'])
 
     # Save hyperparams to file with YAML
     with open(os.path.join(output_dir, 'hparams.yaml'), 'w') as f:
@@ -172,6 +175,20 @@ def sweep_episode(hparams) -> float:
             **hparams,
         )
         writer.add_hparams(hparams, score_dict)
+        eval_from_episode_dir(
+            eval_dir = eval_dir,
+            episode_dir = output_dir,
+            output_dir = output_dir,
+            eval_on = hparams['curriculum'],
+            max_num_samples_eval = 1000,
+            max_time_hours = 0.008,
+            log_images = True,
+            save_pred_img = True,
+            save_submit_csv = True,
+            save_histograms = True,
+            writer=writer,
+            **hparams,
+        )
         writer.close()
         # Score is average of all scores
         score = sum(score_dict.values()) / len(score_dict)

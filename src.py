@@ -2,6 +2,7 @@ import csv
 import gc
 import math
 import os
+import sys
 import pprint
 import time
 from io import StringIO
@@ -25,7 +26,7 @@ from torch.optim.lr_scheduler import LambdaLR
 from torch.utils.data import (DataLoader, Dataset, RandomSampler,
                               SequentialSampler)
 from torchvision import transforms
-from tqdm import tqdm
+from tqdm.auto import tqdm
 
 
 def get_device(device: str = None):
@@ -170,8 +171,11 @@ class TiledDataset(Dataset):
         ),
                                  dtype=np.float32)
         _slice_dir = os.path.join(data_dir, slices_dir_filename)
-        for i in tqdm(range(min_depth, max_depth),
-                      postfix='converting slices'):
+        _loader = tqdm(
+            range(min_depth, max_depth),
+            postfix=f"Opening Slices",
+            position=0, leave=True)
+        for i in _loader:
             _slice_filepath = os.path.join(_slice_dir, f"{i:02d}.tif")
             slice_img = Image.open(_slice_filepath).convert("F")
             if self.resize != 1.0:
@@ -431,7 +435,7 @@ def train_valid(
                     pin_memory=True,
                 )
                 # TODO: prevent tqdm from printing on every iteration
-                _loader = tqdm(_dataloader)
+                _loader = tqdm(_dataloader, postfix=f"{phase}/{_dataset_id}/", position=0, leave=True)
                 score = 0
                 print(f"{phase} on {_dataset_filepath} ...")
                 for images, centerpoint, labels in _loader:
@@ -466,7 +470,8 @@ def train_valid(
                     if save_model:
                         _model_filepath = os.path.join(
                             output_dir,
-                            f"model_{run_name}_best_{_dataset_id}.pth")
+                            f"model.pth")
+                            #  f"model_{run_name}_best_{_dataset_id}.pth")
                         print(f"Saving model to {_model_filepath}")
                         torch.save(model.state_dict(), _model_filepath)
                 # Flush ever batch
@@ -583,7 +588,7 @@ def eval(
         time_start = time.time()
         time_elapsed = 0
         phase = "Eval"
-        _loader = tqdm(_dataloader, postfix=f"Eval {_dataset_id}")
+        _loader = tqdm(_dataloader, postfix=f"{phase}/{_dataset_id}/", position=0, leave=True)
         for i, (images, centerpoint) in enumerate(_loader):
             step += 1
             if writer and log_images:
@@ -616,7 +621,7 @@ def eval(
 
         if writer is not None:
             print("Writing prediction image to TensorBoard...")
-            writer.add_image(f'pred_{_dataset_id}', np.expand_dims(pred_image, axis=0) * 255)
+            writer.add_image(f'pred_{_dataset_id}', np.expand_dims(pred_image, axis=0) * 255, step)
 
         if save_histograms:
             # Save histogram of predictions as image
@@ -632,13 +637,12 @@ def eval(
                 _height = int(np_hist[bin] * 100)
                 hist[0:_height, bin] = 255
             hist_img = Image.fromarray(hist)
-            _histogram_filepath = os.path.join(
-                output_dir, f"pred_{_dataset_id}_histogram.png")
+            _histogram_filepath = os.path.join(output_dir, f"pred_{_dataset_id}_hist.png")
             hist_img.save(_histogram_filepath)
 
             if writer is not None:
                 print("Writing prediction histogram to TensorBoard...")
-                writer.add_histogram(f'pred_{_dataset_id}', pred_image)
+                writer.add_histogram(f'pred_{_dataset_id}', hist, step)
 
         # Resize pred_image to original size
         if resize != 1.0:

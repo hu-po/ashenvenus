@@ -399,7 +399,6 @@ def train_valid(
         ]:
             for _dataset_id in curriculum:
                 _dataset_filepath = os.path.join(data_dir, _dataset_id)
-                print(f"{phase} on {_dataset_filepath} ...")
                 _score_name = f"Dice/{phase}/{_dataset_id}"
                 if _score_name not in best_score_dict:
                     best_score_dict[_score_name] = 0
@@ -425,8 +424,10 @@ def train_valid(
                     ),
                     pin_memory=True,
                 )
+                # TODO: prevent tqdm from printing on every iteration
                 _loader = tqdm(_dataloader)
                 score = 0
+                print(f"{phase} on {_dataset_filepath} ...")
                 for images, labels in _loader:
                     train_step += 1
                     if writer and log_images:
@@ -467,9 +468,6 @@ def train_valid(
                         torch.save(model.state_dict(), _model_filepath)
                 # Flush ever batch
                 writer.flush()
-        # Flush writer every epoch
-        writer.flush()
-    writer.close()
     return best_score_dict
 
 
@@ -549,6 +547,12 @@ def eval(
             # sampler = SequentialSampler(_dataset),
             sampler = RandomSampler(
                 _dataset,
+                # TODO: Num samples just based on time, and average the predictions
+                # thus making it iteratively better over time. You can maybe
+                # condition the image on the previous prediction (aka the label is one of the tiles)
+                # which you can emulate with the labels during training.
+                # effectively doing a kind of pseudo-labeling, which is similar to the
+                # original SAM approach.
                 num_samples=num_samples_eval,
                 # Generator with constant seed for reproducibility during eval
                 generator=torch.Generator().manual_seed(42),
@@ -562,6 +566,7 @@ def eval(
         print(f"Pred image min: {pred_image.min()}, max: {pred_image.max()}")
 
         _loader = tqdm(_dataloader, postfix=f"Eval {_dataset_id}")
+
         for i, (images, labels) in enumerate(_loader):
             train_step += 1
             if writer and log_images:

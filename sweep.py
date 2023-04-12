@@ -161,7 +161,6 @@ def sweep_episode(hparams) -> float:
             writer=writer,
             **hparams,
         )
-        # Only works without tb open
         writer.add_hparams(hparams, score_dict)
         writer.close()
         # Score is average of all scores

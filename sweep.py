@@ -149,7 +149,7 @@ def sweep_episode(hparams) -> float:
     weights_filepath = os.path.join(MODEL_DIR, weights_filepath)
 
     try:
-        writer = SummaryWriter(log_dir=output_dir)
+        writer = SummaryWriter(logdir=output_dir)
         # Train and evaluate a TFLite model
         score_dict = train_valid(
             run_name =run_name,

@@ -393,7 +393,7 @@ def train_valid(
     if lr_sched == "cosine":
         _f = lambda x: warmup_cosine_annealing(x, num_epochs, warmup_epochs, eta_min=0.1 * lr, eta_max=lr)
     elif lr_sched == "gamma":
-        _f = lambda x: warmup_gamma(x, num_epochs, warmup_epochs, gamma=0.1, eta_min=0.1 * lr, eta_max=lr)
+        _f = lambda x: warmup_gamma(x, num_epochs, warmup_epochs, gamma=0.9, eta_min=0.1 * lr, eta_max=lr)
     else:
         _f = lambda x: lr
     lr_sched = LambdaLR(optimizer, _f)

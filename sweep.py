@@ -86,14 +86,15 @@ HYPERPARAMS = {
         # '123',
     ]),
     'num_samples_train': hp.choice('num_samples_train', [
-        2,
-        # 2000,
-        # 20000,
+        # 2,
+        2000,
+        20000,
         # 200000,
     ]),
     'num_samples_valid': hp.choice('num_samples_valid', [
         # 2,
-        10,
+        200,
+        # 8000,
     ]),
     'resize': hp.choice('resize', [
         1.0, # Universal Harmonics
@@ -113,7 +114,7 @@ HYPERPARAMS = {
         42, # Universal Harmonics
     ]),
     'lr_sched': hp.choice('lr_sched', [
-        'cosine',
+        # 'cosine',
         'gamma',
         'flat',
     ]),
@@ -121,8 +122,8 @@ HYPERPARAMS = {
     'seed': 0,
     'batch_size' : 2,
     'num_epochs': hp.choice('num_epochs', [
-        1,
-        # 8,
+        # 1,
+        8,
     ]),
     'warmup_epochs': hp.choice('warmup_epochs', [
         0,
@@ -181,7 +182,7 @@ def sweep_episode(hparams) -> float:
             output_dir = output_dir,
             eval_on = hparams['curriculum'],
             max_num_samples_eval = 1000,
-            max_time_hours = 0.008,
+            max_time_hours = 0.01,
             log_images = False,
             save_pred_img = True,
             save_submit_csv = False,

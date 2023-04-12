@@ -1,10 +1,11 @@
 import csv
 import gc
+import math
 import os
 import pprint
+import time
 from io import StringIO
 from typing import Dict, Tuple, Union
-import math
 
 import cv2
 import numpy as np
@@ -14,13 +15,13 @@ import torch.nn as nn
 import torch.nn.functional as F
 import yaml
 from PIL import Image, ImageFilter
-from torch.optim.lr_scheduler import LambdaLR
 from segment_anything import SamAutomaticMaskGenerator, sam_model_registry
 from segment_anything.modeling import (ImageEncoderViT, MaskDecoder,
                                        PromptEncoder, Sam)
 from segment_anything.utils.amg import (MaskData, batched_mask_to_box,
                                         build_point_grid)
 from tensorboardX import SummaryWriter
+from torch.optim.lr_scheduler import LambdaLR
 from torch.utils.data import (DataLoader, Dataset, RandomSampler,
                               SequentialSampler)
 from torchvision import transforms
@@ -491,20 +492,22 @@ def eval(
     save_submit_csv: bool = False,
     save_histograms: bool = False,
     writer=None,
+    max_time_hours: float = 0.5,
     # Dataset
     eval_on: str = '123',
     resize: float = 1.0,
     interp: str = "bilinear",
-    num_samples_eval: int = 1000,
+    max_num_samples_eval: int = 1000,
     crop_size: Tuple[int] = (256, 256),
     label_size: Tuple[int] = (8, 8),
     min_depth: int = 0,
     max_depth: int = 60,
     **kwargs,
 ):
-    device = get_device(device)
+    print(f"Eval will run for maximum of {max_time_hours} hours (PER DATASET)")
+    max_time_seconds = max_time_hours * 60 * 60
 
-    # device = "cpu"
+    device = get_device(device)
     sam_model = sam_model_registry[model](checkpoint=weights_filepath)
     model = ClassyModel(
         image_encoder=sam_model.image_encoder,
@@ -553,7 +556,7 @@ def eval(
                 # which you can emulate with the labels during training.
                 # effectively doing a kind of pseudo-labeling, which is similar to the
                 # original SAM approach.
-                num_samples=num_samples_eval,
+                num_samples=max_num_samples_eval,
                 # Generator with constant seed for reproducibility during eval
                 generator=torch.Generator().manual_seed(42),
             ),
@@ -565,8 +568,9 @@ def eval(
         print(f"Pred image {_dataset_id} shape: {pred_image.shape}")
         print(f"Pred image min: {pred_image.min()}, max: {pred_image.max()}")
 
+        time_start = time.time()
+        time_elapsed = 0
         _loader = tqdm(_dataloader, postfix=f"Eval {_dataset_id}")
-
         for i, (images, labels) in enumerate(_loader):
             train_step += 1
             if writer and log_images:
@@ -585,6 +589,12 @@ def eval(
                     pixel_index[0] - label_size[0] : pixel_index[0] + label_size[0],
                     pixel_index[1] - label_size[1] : pixel_index[1] + label_size[1],
                 ] = pred
+            
+            # Check if we have exceeded the time limit
+            time_elapsed = time.time() - time_start
+            if time_elapsed > max_time_seconds:
+                print(f"Time limit exceeded for dataset {_dataset_id}")
+                break
 
         if writer is not None:
             print("Writing prediction image to TensorBoard...")
@@ -665,6 +675,8 @@ def eval_from_episode_dir(
     # Merge kwargs with hparams, kwargs takes precedence
     hparams = {**hparams, **kwargs}
     print(f"Hyperparams:\n{pprint.pformat(hparams)}\n")
+    # Make sure output dir exists
+    os.makedirs(output_dir, exist_ok=True)
     eval(
         output_dir=output_dir,
         weights_filepath=_weights_filepath,

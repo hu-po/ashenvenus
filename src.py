@@ -108,6 +108,8 @@ class TiledDataset(Dataset):
         pixel_stat_filename="pixel_stats.yaml",
         resize: float = 1.0,
         interp: str = "bilinear",
+        # Pixel normalization to use
+        pixel_norm: str = "mask",
         # Expected slices per fragment
         crop_size: Tuple[int] = (256, 256),
         encoder_size: Tuple[int] = (1024, 1024),
@@ -136,11 +138,8 @@ class TiledDataset(Dataset):
         _pixel_stats_filepath = os.path.join(data_dir, pixel_stat_filename)
         with open(_pixel_stats_filepath, "r") as f:
             pixel_stats = yaml.safe_load(f)
-        self.pixel_mean = pixel_stats["raw"]["mean"]
-        self.pixel_std = pixel_stats["raw"]["std"]
-        # TODO: Need to re-run pixel stat script
-        # self.pixel_mean = pixel_stats["mask"]["mean"]
-        # self.pixel_std = pixel_stats["mask"]["std"]
+        self.pixel_mean = pixel_stats[pixel_norm]["mean"]
+        self.pixel_std = pixel_stats[pixel_norm]["std"]
 
         # Open Mask image
         _image_mask_filepath = os.path.join(data_dir, image_mask_filename)
@@ -357,6 +356,7 @@ def train_valid(
     curriculum: str = "1",
     resize: float = 1.0,
     interp: str = "bilinear",
+    pixel_norm: bool = "mask",
     crop_size: Tuple[int] = (3, 256, 256),
     label_size: Tuple[int] = (8, 8),
     min_depth: int = 0,
@@ -409,6 +409,7 @@ def train_valid(
                     label_size=label_size,
                     resize=resize,
                     interp=interp,
+                    pixel_norm=pixel_norm,
                     min_depth=min_depth,
                     max_depth=max_depth,
                     train=True,
@@ -497,6 +498,7 @@ def eval(
     eval_on: str = '123',
     resize: float = 1.0,
     interp: str = "bilinear",
+    pixel_norm: str = "mask",
     max_num_samples_eval: int = 1000,
     crop_size: Tuple[int] = (256, 256),
     label_size: Tuple[int] = (8, 8),
@@ -508,7 +510,7 @@ def eval(
     max_time_seconds = max_time_hours * 60 * 60
 
     device = get_device(device)
-    sam_model = sam_model_registry[model](checkpoint=weights_filepath)
+    sam_model = sam_model_registry[model](checkpoint=None)
     model = ClassyModel(
         image_encoder=sam_model.image_encoder,
         label_size = label_size,
@@ -517,8 +519,11 @@ def eval(
         hidden_dim2 = hidden_dim2,
         dropout_prob = dropout_prob,
     )
-    model.to(device=device)
     model = model.eval()
+    with open(weights_filepath, "rb") as f:
+        state_dict = torch.load(f)
+    model.load_state_dict(state_dict)
+    model.to(device=device)
 
     if save_submit_csv:
         submission_filepath = os.path.join(output_dir, 'submission.csv')
@@ -539,6 +544,7 @@ def eval(
             label_size=label_size,
             resize=resize,
             interp=interp,
+            pixel_norm=pixel_norm,
             min_depth=min_depth,
             max_depth=max_depth,
             train=True,
@@ -662,6 +668,7 @@ def eval(
 
 def eval_from_episode_dir(
     episode_dir: str = None,
+    eval_dir: str = None,
     output_dir: str = None,
     weights_filename: str = "model.pth",
     hparams_filename: str = "hparams.yaml",
@@ -678,6 +685,7 @@ def eval_from_episode_dir(
     # Make sure output dir exists
     os.makedirs(output_dir, exist_ok=True)
     eval(
+        eval_dir=eval_dir,
         output_dir=output_dir,
         weights_filepath=_weights_filepath,
         **hparams,

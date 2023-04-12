@@ -92,6 +92,11 @@ HYPERPARAMS = {
         # 0.3,
         # 0.3,
     ]),
+    'pixel_norm': hp.choice('pixel_norm', [
+        "mask",
+        "ink",
+        "bg",
+    ]),
     'crop_size_str': hp.choice('crop_size_str', [
         '256.256', # Universal Harmonics
         # '128.128',

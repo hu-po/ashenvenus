@@ -1,6 +1,7 @@
 from src import eval_from_episode_dir
 
 eval_from_episode_dir(
+    eval_dir = "C:\\Users\\ook\\Documents\\dev\\ashenvenus\\data\\split\\valid",
     episode_dir = "C:\\Users\\ook\\Documents\\dev\\ashenvenus\\output\\083f0bda",
     output_dir = "C:\\Users\\ook\\Documents\\dev\\ashenvenus\\output\\pred_083f0bda",
     weights_filename = "model_083f0bda_best_1.pth",

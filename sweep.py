@@ -113,8 +113,8 @@ HYPERPARAMS = {
         42, # Universal Harmonics
     ]),
     'lr_sched': hp.choice('lr_sched', [
-        # 'cosine',
-        # 'gamma',
+        'cosine',
+        'gamma',
         'flat',
     ]),
     # Training

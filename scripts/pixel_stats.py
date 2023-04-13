@@ -31,6 +31,9 @@ for dataset_dir in dataset_dirs:
     print(f"Processing dataset: {dataset_dir}")
 
     # Output will be a YAML file in the dataset directory
+    # mask - only pixels in fragment mask
+    # ink - only pixels within areas labeled as ink
+    # bg - pixels in mask but that aren't in ink
     pixel_stats = {
         'raw': {'min': [], 'max': [], 'mean': [], 'std': [], 'count': 0},
         'mask': {'min': [], 'max': [], 'mean': [], 'std': [], 'count': 0},

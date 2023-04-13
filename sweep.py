@@ -87,8 +87,9 @@ HYPERPARAMS = {
     ]),
     'num_samples_train': hp.choice('num_samples_train', [
         # 2,
-        2000,
-        20000,
+        # 2000,
+        8000,
+        # 20000,
         # 200000,
     ]),
     'num_samples_valid': hp.choice('num_samples_valid', [
@@ -123,7 +124,8 @@ HYPERPARAMS = {
     'batch_size' : 2,
     'num_epochs': hp.choice('num_epochs', [
         # 1,
-        8,
+        # 8,
+        16,
     ]),
     'warmup_epochs': hp.choice('warmup_epochs', [
         0,

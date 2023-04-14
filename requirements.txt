@@ -3,3 +3,4 @@ tensorboardx==2.6
 hyperopt==0.2.7
 scipy==1.9.3
 opencv-python==4.6.0.66
+polars==0.17.2

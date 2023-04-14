@@ -116,7 +116,7 @@ HYPERPARAMS = {
     ]),
     'lr_sched': hp.choice('lr_sched', [
         # 'cosine',
-        'gamma',
+        # 'gamma',
         'flat',
     ]),
     # Training

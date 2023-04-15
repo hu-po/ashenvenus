@@ -88,8 +88,8 @@ HYPERPARAMS = {
     'num_samples_train': hp.choice('num_samples_train', [
         # 2,
         # 2000,
-        8000,
-        # 20000,
+        # 8000,
+        20000,
         # 200000,
     ]),
     'num_samples_valid': hp.choice('num_samples_valid', [
@@ -183,8 +183,8 @@ def sweep_episode(hparams) -> float:
             episode_dir = output_dir,
             output_dir = output_dir,
             eval_on = hparams['curriculum'],
-            max_num_samples_eval = 1000,
-            max_time_hours = 0.01,
+            max_num_samples_eval = 5000,
+            max_time_hours = 0.1,
             log_images = False,
             save_pred_img = True,
             save_submit_csv = False,
